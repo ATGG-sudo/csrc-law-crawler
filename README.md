@@ -1,164 +1,265 @@
 # CSRC 法规库爬虫
 
-从 [证监会证券期货法规数据库（NERIS）](https://neris.csrc.gov.cn/falvfagui/) 抓取法规正文、执法文书正文和关系数据，并以[中国证券投资基金业协会官网](https://www.amac.org.cn/index/)作为补充官方来源，供合规检索、RAG、关系推理或后续入库使用。
+从中国证监会证券期货法规数据库（NERIS）抓取法规、执法文书、修订关系和案例引用，并使用中国证券投资基金业协会（AMAC）官网补充来源，最终生成适合检索、RAG、知识图谱和归档的 JSON / Markdown 数据。
 
-默认输出目录：`/mnt/d/FUND_COMPLIANCE/CSRC`，可在 [config.py](/home/anjie/projects/csrc-law-crawler/config.py:6) 修改。
+数据来源：
 
-## 当前数据快照
+- [证监会证券期货法规数据库（NERIS）](https://neris.csrc.gov.cn/falvfagui/)
+- [中国证券投资基金业协会（AMAC）](https://www.amac.org.cn/)
 
-最近校验时间：2026-06-24。
+## 功能
 
-| 项目 | 当前结果 |
-| --- | ---: |
-| 官网法规列表 `lawType=1` | 3422 |
-| 本地法规文件 `laws/reg_*.json` | 3422 |
-| 官网执法文书列表 `lawType=2` | 3249 |
-| 本地执法文书文件 `writs/writ_*.json` | 781 |
-| 修订族 `relations/revisions.json` | 3311 |
-| 修订版本节点 | 4411 |
-| 无本地正文的历史修订节点 | 989 |
-| 有官方证据的修订边 | 1086 |
-| 关联法规边 | 946 |
-| 案例引用唯一文书 ID | 781 |
-| NERIS 独立附件记录 | 1313 |
-| NERIS 独立附件已下载 / 源站空文件 | 1033 / 280 |
-| AMAC 页面原始文件 | 489 |
-| AMAC 页面及附件来源记录 | 664 |
-| AMAC 已下载附件 | 175 |
-| 统一法规实体 `catalog/laws` | 3852 |
-| 统一目录 normalized `catalog/normalized/laws` | 3852 |
-| 统一目录 Markdown `catalog/markdown/laws` | 3852 |
-| AMAC 新增于 NERIS 的来源记录 | 429 |
-| 清洗派生法规 `normalized/laws` | 3422 |
-| 清洗抽取表格 | 1276 |
-| 清洗发现图片/附件资产 | 1587 |
-| 已下载资产 | 1159 |
-| 下载失败资产 | 428 |
-| 覆盖缺口 `relations/coverage_gaps.json` | 463 |
-| Markdown 法规文件 `markdown/laws` | 3422 |
-| Markdown 现行有效 `markdown/laws/current` | 3380 |
-| Markdown 其他状态 `markdown/laws/other` | 42 |
+- 抓取 NERIS 法规列表、结构化正文和元数据。
+- 抓取 NERIS 执法文书正文、当事人、处罚信息和法律依据。
+- 根据官方 `changeLaw` 证据生成法规修订族和 `supersedes` 关系。
+- 建立“法规 / 条文 → 执法文书”的案例索引。
+- 发现并下载 NERIS 独立附件及正文内嵌图片、附件。
+- 抓取 AMAC 政策法规、页面正文和附件，补充 NERIS 未收录内容。
+- 合并 NERIS 与 AMAC 来源，生成来源无关的统一法规目录。
+- 清洗 HTML、提取表格和附件，导出纯文本及 Markdown。
+- 使用 checkpoint 断点续传，并提供多层数据校验脚本。
 
-说明：本地执法文书默认只抓取 `cases.json` 引用到的文书，不是官网全量 3249 份。需要全量时运行 `python enhance.py --pass 4 --all-writs`。
+## 运行要求
 
-## 修复与数据质量
+- Python 3.10+
+- 可访问 NERIS 和 AMAC 官网的网络环境
+- 足够的本地磁盘空间；全量正文和附件会占用较多空间
 
-本轮已完成以下修复：
-
-- `revisions.json` 不再按 `csrc_number` 合并。修订族只能来自 NERIS `changeLaw.evltList` 证据，边包含来源、证据和置信度。
-- NERIS 独立附件通过 `findLocalFile` / `downloadLocal` 补抓，不再只依赖正文内嵌链接。
-- AMAC 原始记录独立写入 `sources/amac/`，不会伪装成 NERIS `reg_*` 文件。
-- 新增来源匹配层和统一法规实体层：`relations/source_matches.json`、`catalog/laws/`。
-- 新增 `coverage_gaps.json`，区分源站缺失、未查询附件、未下载、下载失败和解析失败。
-- 3422 个法规文件的 `metadata.pub_org` 已从 `source.list_summary.pub_org` 回填，当前缺失数为 0。
-- 文书详情页解析已改为标准库 `HTMLParser`，不再用正则跨 HTML 表格抓取 metadata。
-- 18 份被污染的文书元数据已重跑，当前 `writ_type` 污染、超长 `writ_type`、缺失 `dspt_date`、空正文均为 0。
-- 已增加法规清洗派生层：原始 `laws/` 不动，清洗结果写入 `normalized/laws/`。
-- 已增加图片/附件资产下载层：资产写入 `assets/laws/{law_id}/`，并生成全局 manifest 和失败清单。
-- 已增加 Markdown 导出层：`normalized/laws/` 可导出到 `markdown/laws/current` 和 `markdown/laws/other`，资产占位会替换为本地相对路径或源 URL。
-- Markdown 文件名采用 `title - fileno - effective_date.md`，自动清理文件名非法字符、控制 UTF-8 字节长度，并在重名时追加短 ID。
-
-仍需注意：
-
-- 原始 `laws/` 仍保留官网 API 原始 HTML，这是刻意保真的 source layer；检索/RAG 应优先使用 `normalized/laws/`。
-- `normalized/laws/` 的 `full_text_plain` 与 `full_text_markdown` 当前无 HTML-like 标签残留，并已把表格转成结构化 `tables[]` 和 Markdown。
-- 1313 个 NERIS 独立附件中已下载 1033 个；其余 280 个由下载接口返回 HTTP 200 空内容，属于源站附件对象不可用。
-- 正文内嵌资产共 274 个，已下载 126 个、失败 148 个；失败主要是官网 `rdqsHeader/file/...` 返回空响应，详见 `assets/assets_failures.json`。
-- `coverage_gaps.json` 当前记录 26 个源站缺正文、428 个下载失败和 9 个待人工复核的系列编号缺口。
-- AMAC 补充层共提供 664 条页面/附件来源记录，匹配结果为：NERIS 未收录 429、同文 219、正文更完整的补充副本 15、歧义 1。
-- 统一目录 3852 个实体均已生成 normalized JSON 和 Markdown；其中 10 个模板、XBRL 或旧格式附件无法自动抽取正文，Markdown 会明确标记为 `metadata_only` 并保留官方来源及本地附件链接。
-- 25 份本地文书没有 `legal_basis`。抽检显示这通常来自官网详情页本身没有结构化处理依据，或旧文书页面结构较弱。
-- `manifest.json` 当前只覆盖法规文件；文书以 `relations/cases.json` 的 `writ_ids` 和 `writs/` 文件为准。
-
-## 安装
+安装依赖：
 
 ```bash
-cd /home/anjie/projects/csrc-law-crawler
+git clone <repository-url>
+cd csrc-law-crawler
+
 python3 -m venv .venv
 source .venv/bin/activate
+python -m pip install --upgrade pip
 pip install -r requirements.txt
 ```
 
-PDF和DOCX附件正文分别使用 `pypdf`、`python-docx` 抽取。
+Windows PowerShell 激活虚拟环境：
 
-## P0-P2 修复流程
-
-一键执行：
-
-```bash
-python repair.py --phase all
+```powershell
+.\.venv\Scripts\Activate.ps1
 ```
 
-分阶段执行：
+## 配置输出目录
 
-```bash
-# P0：可信修订关系、NERIS独立附件、覆盖缺口
-python prefetch_revision_evidence.py --workers 2
-python enhance.py --pass 2 --rebuild-relations --skip-related-laws
-python neris_attachments.py --workers 2
-python normalize_laws.py --force
-python download_assets.py --manifest-only
-python coverage_gaps.py
+默认输出目录在 [config.py](config.py) 中：
 
-# P1：AMAC政策法规基线 + 登备动态等全站补充检索
-python amac_crawl.py
-
-# P2：来源匹配和统一法规实体
-python build_catalog.py
-python validate_catalog.py
-python normalize_catalog.py --force --clean
-python export_markdown_catalog.py --force --clean
-python validate_catalog_exports.py
+```python
+OUTPUT_DIR = Path("/mnt/d/FUND_COMPLIANCE/CSRC")
 ```
 
-修订关系重建会清除旧 `revision_ref`。旧版 `revisions.json` 不允许被增量复用，必须显式使用 `--rebuild-relations`。
-`prefetch_revision_evidence.py` 会把每条 `changeLaw` 响应写入
-`relations/revision_evidence_cache/`，中断后可继续，建图时优先复用缓存。
+首次运行前请将它改为本机可写目录，例如：
 
-## 推荐运行顺序
+```python
+OUTPUT_DIR = Path("/data/csrc-law")
+```
+
+所有脚本共享该目录。不要让两个爬虫实例同时写入同一个输出目录。
+
+## 5 分钟试跑
+
+先抓取少量法规，确认网络、解析和输出路径正常：
 
 ```bash
-# 1. 全量法规正文，支持 checkpoint 断点续传
+# 抓取 5 条法规；会写入 checkpoint，之后可以继续运行
+python crawl.py --types regulation --limit 5
+
+# 生成清洗后的 JSON
+python normalize_laws.py --limit 5 --force
+
+# 导出 Markdown
+python export_markdown_laws.py --limit 5 --force
+
+# 校验清洗结果
+python validate_normalized.py --sample 5
+```
+
+主要结果位于：
+
+```text
+OUTPUT_DIR/
+├── laws/                  # NERIS 原始法规 JSON
+├── normalized/laws/       # 清洗后的法规 JSON
+└── markdown/laws/         # 可直接阅读或导入 RAG 的 Markdown
+```
+
+## 使用方式
+
+### 方案一：只构建 NERIS 法规库
+
+适合需要法规正文、修订关系、案例和执法文书的用户。
+
+```bash
+# 1. 抓取全部法规正文，并查询独立附件列表
 python crawl.py --types regulation
 
-# 2. 首次升级时从官网重建可信修订链
+# 2. 预取官方修订证据，支持中断后继续
+python prefetch_revision_evidence.py --workers 2
+
+# 3. 从官方证据重建修订关系和关联法规
 python enhance.py --pass 2 --rebuild-relations
 
-# 3. 法规/条文 -> 执法案例索引
+# 4. 建立法规/条文到执法文书的案例索引
 python enhance.py --pass 3
 
-# 4. 抓取案例引用的执法文书正文
+# 5. 下载案例实际引用的执法文书正文
 python enhance.py --pass 4
 
-# 可选：抓全量执法文书
+# 6. 下载 NERIS 独立附件
+python neris_attachments.py --workers 2
+```
+
+如果确实需要官网全部执法文书，而不只是案例索引引用的文书：
+
+```bash
 python enhance.py --pass 4 --all-writs
 ```
 
-一次性跑增强阶段：
+### 方案二：生成适合检索 / RAG 的数据
+
+在“方案一”的法规抓取完成后运行：
 
 ```bash
-python enhance.py --pass all
+# 1. 清洗 HTML、提取表格、发现正文内嵌资产
+python normalize_laws.py --force
+
+# 2. 下载清洗阶段发现的图片和附件
+python download_assets.py
+
+# 3. 校验清洗及资产引用
+python validate_normalized.py --sample 10
+
+# 4. 导出 Markdown
+python export_markdown_laws.py --force --clean
 ```
 
-常用参数：
+推荐的数据入口：
 
-| 命令 | 参数 | 说明 |
-| --- | --- | --- |
-| `crawl.py` | `--types regulation \| writ \| all` | 抓取法规、文书或全部 |
-| `crawl.py` | `--limit N` | 仅抓前 N 条，便于调试 |
-| `enhance.py` | `--pass 2 \| 3 \| 4 \| all` | 运行增强阶段 |
-| `enhance.py` | `--limit N` | Pass 2/3 仅处理前 N 条法规 |
-| `enhance.py` | `--all-writs` | Pass 4 抓取官网文书列表全量 |
-| `enhance.py` | `--writ-pages N` | Pass 4 全量模式最多扫描 N 页 |
-| `enhance.py` | `--force` | Pass 4 强制重抓文书详情 |
-| `enhance.py` | `--no-patch-revision-ref` | Pass 2 不回写法规文件的 `revision_ref` |
-| `enhance.py` | `--rebuild-relations` | 丢弃旧修订图和旧 `revision_ref` 后重建 |
-| `enhance.py` | `--skip-related-laws` | 仅重建修订图，不刷新关联法规 |
-| `enhance.py` | `--skip-law-level-cases` | Pass 3 跳过法规级案例 |
+- RAG / 全文检索：`normalized/laws/* -> full_text_plain`
+- 保留表格的检索：`normalized/laws/* -> full_text_markdown`
+- 人工阅读或 Markdown 索引：`markdown/laws/current/`
+- 原始数据追溯：`laws/reg_*.json`
 
-限速策略在 [config.py](/home/anjie/projects/csrc-law-crawler/config.py:11)：每次请求间隔 1.8-3.6 秒，每 40 次请求额外休息 8-15 秒。不要并行跑多个实例，容易触发 WAF 或 5xx。
+原始 `laws/` 不会被清洗脚本覆盖。
 
-## 输出目录结构
+### 方案三：构建 NERIS + AMAC 统一法规目录
+
+先完成 NERIS 法规抓取，再运行多来源流水线：
+
+```bash
+# P0：可信修订关系、NERIS 独立附件和覆盖缺口
+# P1：AMAC 页面及附件补充
+# P2：来源匹配、统一实体、清洗、Markdown 和校验
+python repair.py --phase all --delay-min 1.8 --delay-max 3.6
+```
+
+`repair.py` 不包含首次 NERIS 法规正文抓取。空目录开始时，必须先运行：
+
+```bash
+python crawl.py --types regulation
+```
+
+也可以分阶段执行：
+
+```bash
+python repair.py --phase p0 --delay-min 1.8 --delay-max 3.6
+python repair.py --phase p1 --delay-min 1.8 --delay-max 3.6
+python repair.py --phase p2
+```
+
+统一目录结果：
+
+```text
+OUTPUT_DIR/catalog/
+├── laws/                  # 来源无关的统一法规实体
+├── normalized/laws/       # 统一目录清洗结果
+├── markdown/laws/         # 统一目录 Markdown
+├── manifest.json
+└── review_queue.json      # 歧义匹配或效力状态待复核项
+```
+
+## 常用命令
+
+| 任务 | 命令 |
+| --- | --- |
+| 抓取法规 | `python crawl.py --types regulation` |
+| 抓取官网全部文书 | `python crawl.py --types writ` |
+| 限量调试 | `python crawl.py --types regulation --limit 10` |
+| 跳过附件列表查询 | `python crawl.py --types regulation --skip-attachments` |
+| 运行全部增强阶段 | `python enhance.py --pass all` |
+| 重建修订关系 | `python enhance.py --pass 2 --rebuild-relations` |
+| 只抓案例引用文书 | `python enhance.py --pass 4` |
+| 抓全部执法文书 | `python enhance.py --pass 4 --all-writs` |
+| 抓取 AMAC 补充来源 | `python amac_crawl.py` |
+| 生成统一目录 | `python build_catalog.py` |
+| 清洗统一目录 | `python normalize_catalog.py --force --clean` |
+| 导出统一目录 Markdown | `python export_markdown_catalog.py --force --clean` |
+
+查看任意入口的完整参数：
+
+```bash
+python crawl.py --help
+python enhance.py --help
+python repair.py --help
+```
+
+## 校验
+
+运行单元测试和语法检查：
+
+```bash
+python -m unittest discover -s tests -v
+python -m compileall -q .
+```
+
+校验不同数据层：
+
+```bash
+# 抽样回源校验修订、案例和文书
+python validate_enhance.py --sample 2 --pass all
+
+# 校验 NERIS 清洗、资产和 Markdown 前置数据
+python validate_normalized.py --sample 10
+
+# 校验多来源匹配和统一目录引用
+python validate_catalog.py
+
+# 校验统一目录 normalized / Markdown 覆盖率
+python validate_catalog_exports.py
+```
+
+后两个校验脚本会直接执行校验，不提供 `--help` 参数。
+
+## 运行安全与注意事项
+
+1. 温和访问源站
+
+   默认单请求间隔为 1.8–3.6 秒，每 40 次请求额外暂停 8–15 秒。全量任务耗时较长是正常现象。不要并行启动多个全量实例。
+
+2. 不要组合 `--rebuild-relations` 和 `--limit`
+
+   `--rebuild-relations` 会清理旧修订引用并覆盖 `relations/revisions.json`。如果同时限制为前 N 条，只会留下局部关系图。`repair.py --phase p0 --law-limit N` 具有同样风险，应仅在独立测试输出目录使用。
+
+3. 谨慎使用 `--clean`
+
+   `normalize_catalog.py --clean`、`export_markdown_catalog.py --clean` 和 `export_markdown_laws.py --clean` 会清空对应派生目录后重建。它们不会删除原始 `laws/`，但不应与其他写入任务并行运行。
+
+4. 限量资产下载会生成限量清单
+
+   `download_assets.py --limit-laws` 或 `--limit-assets` 会使用本轮扫描结果重写全局资产 manifest。调试时建议使用独立输出目录，完成后再运行一次不带 limit 的命令。
+
+5. 附件失败不一定是本地错误
+
+   部分 NERIS 附件接口会返回 HTTP 200 但正文为空；相关项会记录为失败并进入缺口清单。
+
+6. 数据不是法律意见
+
+   本项目保存官方来源和抓取时间，仍应在正式使用前回到官方页面核验时效性、完整性和效力状态。
+
+## 输出目录
 
 ```text
 OUTPUT_DIR/
@@ -168,6 +269,7 @@ OUTPUT_DIR/
 │   └── writ_{lawWritId}.json
 ├── relations/
 │   ├── revisions.json
+│   ├── revision_evidence_cache/
 │   ├── related_laws.json
 │   ├── cases.json
 │   ├── coverage_gaps.json
@@ -175,410 +277,111 @@ OUTPUT_DIR/
 │   └── catalog_relations.json
 ├── sources/
 │   ├── amac/
-│   │   └── amac_{url_hash}.json
 │   └── amac_manifest.json
-├── catalog/
-│   ├── laws/
-│   │   └── law_{canonical_id}.json
-│   ├── normalized/
-│   │   ├── laws/
-│   │   │   └── law_{canonical_id}.json
-│   │   └── manifest.json
-│   ├── markdown/
-│   │   ├── laws/
-│   │   │   ├── current/
-│   │   │   └── other/
-│   │   └── manifest.json
-│   ├── manifest.json
-│   └── review_queue.json
 ├── normalized/
 │   ├── laws/
-│   │   └── reg_{secFutrsLawId}.json
 │   └── manifest.json
 ├── assets/
 │   ├── laws/
-│   │   └── {secFutrsLawId}/
-│   │       ├── image_*.png
-│   │       └── asset_manifest.json
-│   ├── assets_manifest.json
-│   ├── assets_failures.json
 │   ├── neris_attachments/
-│   └── amac/
+│   ├── amac/
+│   ├── assets_manifest.json
+│   └── assets_failures.json
 ├── markdown/
-│   ├── laws/
-│   │   ├── current/                # status = 现行有效
-│   │   │   └── {title} - {fileno} - {effective_date}.md
-│   │   └── other/
-│   │       └── {title} - {fileno} - {effective_date}.md
+│   ├── laws/current/
+│   ├── laws/other/
 │   └── manifest.json
-├── manifest.json
+├── catalog/
+│   ├── laws/
+│   ├── normalized/laws/
+│   ├── markdown/laws/
+│   ├── manifest.json
+│   └── review_queue.json
 ├── checkpoint.json
-└── crawl.log / enhance.log
+└── manifest.json
 ```
 
-实体 ID：
+## 数据模型
 
-| 类型 | 官网字段 | 本地文件 |
-| --- | --- | --- |
-| 法规 | `secFutrsLawId` | `laws/reg_{id}.json` |
-| 执法文书 | `lawWritId` | `writs/writ_{id}.json` |
-| 条文 | `secFutrsLawEntryId` | 法规 JSON 的 `entries[]` / `items[]` |
+### 法规
 
-## 数据结构
+`laws/reg_{id}.json` 保存：
 
-### 法规文件
+- `metadata`：名称、文号、发布单位、发布日期、生效日期、效力状态等。
+- `entries`：章节、条文和子项。
+- `full_text`：按法规结构拼接的原始全文。
+- `source`：列表摘要、详情页 URL 和抓取时间。
+- `source_attachments`：NERIS 独立附件。
+- `revision_ref`：指向法规修订族。
 
-`laws/reg_{id}.json`：
+### 执法文书
 
-```json
-{
-  "metadata": {
-    "id": "0fc431a2a10b47909beef058f6ac3335",
-    "number": "1001",
-    "name": "中华人民共和国证券法",
-    "fileno": "主席令第37号",
-    "pub_org": "全国人民代表大会常务委员会",
-    "pub_date": "2019-12-27",
-    "effective_date": "2020-02-29",
-    "ineffective_date": null,
-    "status_code": "1",
-    "status": "现行有效",
-    "version": "20191230",
-    "body_ago": "前言或导语",
-    "body_aft": ""
-  },
-  "entries": [
-    {
-      "entry_id": "…",
-      "code": "0000.0000.0000.0001",
-      "class_code": "…",
-      "title": "第一章 总则",
-      "text": "…",
-      "items": [
-        {
-          "entry_id": "…",
-          "code": "…",
-          "title": "",
-          "text": "…"
-        }
-      ]
-    }
-  ],
-  "full_text": "按 metadata/body/entries 拼接的全文",
-  "entry_class_code": "4",
-  "source": {
-    "list_summary": {
-      "fileno": "主席令第37号",
-      "pub_org": "全国人民代表大会常务委员会",
-      "pub_date_ms": 1577376000000
-    },
-    "crawled_at": "…",
-    "detail_url": "https://neris.csrc.gov.cn/falvfagui/rdqsHeader/mainbody?navbarId=1&secFutrsLawId=…"
-  },
-  "revision_ref": {
-    "family_id": "neris:…",
-    "relations_file": "relations/revisions.json"
-  }
-}
-```
+`writs/writ_{id}.json` 保存：
 
-### 执法文书文件
+- `metadata`：文书名、发文机关、日期、类型和原文链接。
+- `body`：文书正文。
+- `legal_basis`：引用法规及条文。
+- `parties`：当事人、角色、违法类型和处罚金额。
 
-`writs/writ_{id}.json`：
+### 修订与案例关系
 
-```json
-{
-  "metadata": {
-    "id": "4fc2d518f9de4f0482dfb2df6e28024a",
-    "name": "中国证券监督管理委员会福建监管局行政处罚决定书〔2026〕21号（亚太所、田梦珺、任海春）",
-    "fileno": "",
-    "issue_org": "中国证券监督管理委员会福建监管局",
-    "dspt_date": "2026-06-02",
-    "dspt_date_ms": null,
-    "writ_type": "行政处罚",
-    "original_link": "http://www.csrc.gov.cn/…"
-  },
-  "body": "一、案情简介\n…",
-  "legal_basis": [
-    {
-      "law_id": "0fc431a2a10b47909beef058f6ac3335",
-      "entry_id": "85d0334ade4a45e598c548539dbf3c7f",
-      "law_name": "中华人民共和国证券法",
-      "entry_title": "第一百六十三条"
-    }
-  ],
-  "parties": [
-    {
-      "party_type": "组织机构",
-      "name": "…",
-      "role": "会计师事务所及其从业人员",
-      "violation_type": "审计程序缺陷",
-      "penalty_amount": "264.15万元"
-    }
-  ],
-  "list_summary": null,
-  "source": {
-    "crawled_at": "…",
-    "detail_url": "https://neris.csrc.gov.cn/falvfagui/rdqsHeader/lawWritInfo?navbarId=1&lawWritId=…",
-    "list_api": "rdqsHeader/informationController?lawType=2",
-    "detail_type": "html"
-  }
-}
-```
+- `relations/revisions.json`：官方修订族、版本节点和 `supersedes` 边。
+- `relations/related_laws.json`：NERIS 返回的关联法规。
+- `relations/cases.json`：法规级和条文级案例，以及需要抓取的文书 ID。
+- `relations/catalog_relations.json`：统一目录中的发布、附件等跨实体关系。
 
-### 修订关系
+### 清洗法规
 
-`relations/revisions.json`：
+`normalized/laws/reg_{id}.json` 主要增加：
 
-```json
-{
-  "updated_at": "…",
-  "schema_version": 2,
-  "families": {
-    "neris:…": {
-      "family_id": "neris:…",
-      "versions": [
-        {
-          "id": "0fc431a2a10b47909beef058f6ac3335",
-          "csrc_number": "1001",
-          "version": "20191230",
-          "label": "中华人民共和国证券法",
-          "name": "中华人民共和国证券法",
-          "local_file": "laws/reg_0fc431a2a10b47909beef058f6ac3335.json"
-        }
-      ],
-      "edges": [
-        {
-          "from": "新版 secFutrsLawId",
-          "to": "旧版 secFutrsLawId",
-          "relation": "supersedes",
-          "source": "neris.changeLaw",
-          "confidence": 0.95
-        }
-      ]
-    }
-  },
-  "by_law_id": {
-    "0fc431a2a10b47909beef058f6ac3335": "1001"
-  }
-}
-```
+- `full_text_plain`：去除 HTML 后的检索文本。
+- `full_text_markdown`：保留表格和资产占位的 Markdown。
+- `tables`：结构化表格及 Markdown 表格。
+- `assets`：图片、附件 URL、本地路径、哈希和下载状态。
 
-### 关联法规
+## 当前数据快照
 
-`relations/related_laws.json`：
+最近校验日期：2026-06-24。该表是一次本地全量运行结果，不代表源站数据永久不变。
 
-```json
-{
-  "updated_at": "…",
-  "items": {
-    "源法规 secFutrsLawId": [
-      {
-        "to_law_id": "目标法规 secFutrsLawId",
-        "name": "…",
-        "fileno": "…",
-        "relation_type": "…",
-        "raw": {}
-      }
-    ]
-  }
-}
-```
+| 数据 | 数量 |
+| --- | ---: |
+| NERIS 法规 | 3422 |
+| NERIS 官网执法文书列表 | 3249 |
+| 已抓取案例引用文书 | 781 |
+| NERIS 独立附件记录 | 1313 |
+| AMAC 页面及附件来源记录 | 664 |
+| 统一法规实体 | 3852 |
+| 统一目录 Markdown | 3852 |
+| 修订族 | 3311 |
+| 有官方证据的修订边 | 1086 |
+| 关联法规边 | 946 |
 
-### 案例索引
-
-`relations/cases.json`：
-
-```json
-{
-  "updated_at": "…",
-  "writ_ids": ["4fc2d518f9de4f0482dfb2df6e28024a"],
-  "by_law": {
-    "0fc431a2a10b47909beef058f6ac3335": {
-      "entry_counts": {
-        "secFutrsLawEntryId": 3
-      },
-      "law_level": [
-        {
-          "law_writ_id": "4fc2d518f9de4f0482dfb2df6e28024a",
-          "name": "…",
-          "fileno": "…",
-          "issue_org": "…",
-          "dspt_date_ms": 1780329600000,
-          "link_addr": "http://www.csrc.gov.cn/…",
-          "local_file": "writs/writ_4fc2d518f9de4f0482dfb2df6e28024a.json",
-          "detail_url": "https://neris.csrc.gov.cn/falvfagui/rdqsHeader/lawWritInfo?navbarId=1&lawWritId=…"
-        }
-      ],
-      "by_entry": {
-        "secFutrsLawEntryId": []
-      }
-    }
-  }
-}
-```
-
-## 清洗与资产管线
-
-原始 `laws/` 不覆盖。清洗和资产下载是派生层，可重复运行：
-
-```bash
-# 1. 生成 normalized/laws
-python normalize_laws.py --force
-
-# 2. 下载 normalized 中发现的图片/附件
-python download_assets.py --force
-
-# 3. 校验清洗和资产状态
-python validate_normalized.py --sample 10
-
-# 4. 导出 Markdown
-python export_markdown_laws.py --force --clean
-```
-
-调试参数：
-
-| 命令 | 参数 | 说明 |
-| --- | --- | --- |
-| `normalize_laws.py` | `--limit N` | 仅清洗前 N 个法规 |
-| `normalize_laws.py` | `--force` | 覆盖已有派生文件 |
-| `download_assets.py` | `--limit-laws N` | 仅扫描前 N 个 normalized 法规 |
-| `download_assets.py` | `--limit-assets N` | 最多下载/检查 N 个资产 |
-| `download_assets.py` | `--force` | 已有本地资产也重新下载 |
-| `validate_normalized.py` | `--sample N` | 每类问题展示 N 个样本 |
-| `export_markdown_laws.py` | `--limit N` | 仅导出前 N 个法规 |
-| `export_markdown_laws.py` | `--force` | 覆盖已有 Markdown 文件 |
-| `export_markdown_laws.py` | `--clean` | 导出前清空旧的 `markdown/laws` |
-
-`normalized/laws/reg_{id}.json` 主要新增字段：
-
-```json
-{
-  "source_file": "laws/reg_xxx.json",
-  "normalized_at": "…",
-  "body_ago": {
-    "raw_html": "…",
-    "plain": "…",
-    "markdown": "…",
-    "tables": [],
-    "assets": []
-  },
-  "entries": [
-    {
-      "entry_id": "…",
-      "title": "…",
-      "text_raw_html": "…",
-      "text_plain": "…",
-      "text_markdown": "…",
-      "tables": ["table_0001"],
-      "assets": ["image_xxx"],
-      "items": []
-    }
-  ],
-  "full_text_plain": "供检索/RAG 使用的纯文本",
-  "full_text_markdown": "保留表格和资产占位的 Markdown",
-  "tables": [
-    {
-      "table_id": "table_0001",
-      "rows": [["列1", "列2"]],
-      "markdown": "| 列1 | 列2 |"
-    }
-  ],
-  "assets": [
-    {
-      "asset_id": "image_xxx",
-      "kind": "image",
-      "source_url": "https://neris.csrc.gov.cn/falvfagui/rdqsHeader/file/...",
-      "local_file": "assets/laws/{law_id}/image_xxx.png",
-      "content_type": "image/png",
-      "sha256": "…",
-      "download_status": "ok"
-    }
-  ]
-}
-```
-
-## 校验
-
-项目内置抽样回源校验：
-
-```bash
-python validate_enhance.py --sample 2 --pass all
-```
-
-最近一次结果：
-
-```text
-pass2 进度: 3422/3422
-pass3 进度: 3422/3422
-pass4 进度: 781
-抽样校验未发现不一致
-```
-
-本地结构校验结果：
-
-```text
-missing_pub_org 0
-revision version_ids 4411
-revision by_law_id 4411
-bad revision membership 0
-writ_type_contaminated 0
-missing writ dspt_date 0
-empty writ body 0
-```
-
-清洗派生层校验结果：
-
-```text
-raw_laws 3422
-normalized_laws 3422
-tables 1276
-assets 274
-assets_ok 125
-assets_pending 0
-assets_failed 149
-html_in_plain 0
-html_in_markdown 0
-missing_full_text 0
-missing_local_files 0
-```
-
-Markdown 导出结果：
-
-```text
-markdown_files 3422
-manifest_count 3422
-current_count 3380
-other_count 42
-asset_placeholders 0
-literal_backslash_n 0
-top_level_md 0
-```
+默认 Pass 4 只抓取 `relations/cases.json` 引用的文书，因此本地文书数通常少于官网文书总数。
 
 ## 代码入口
 
 | 文件 | 作用 |
 | --- | --- |
-| [crawl.py](/home/anjie/projects/csrc-law-crawler/crawl.py:1) | Pass 1：列表和详情正文抓取 |
-| [enhance.py](/home/anjie/projects/csrc-law-crawler/enhance.py:1) | Pass 2/3/4 调度入口 |
-| [parser.py](/home/anjie/projects/csrc-law-crawler/parser.py:1) | 法规 JSON 解析和全文拼接 |
-| [writ_parser.py](/home/anjie/projects/csrc-law-crawler/writ_parser.py:1) | 执法文书详情页 HTML 解析 |
-| [revisions_graph.py](/home/anjie/projects/csrc-law-crawler/revisions_graph.py:1) | 修订族合并和 supersedes 边生成 |
-| [pass2_relations.py](/home/anjie/projects/csrc-law-crawler/pass2_relations.py:1) | 修订关系和关联法规 |
-| [pass3_cases.py](/home/anjie/projects/csrc-law-crawler/pass3_cases.py:1) | 法规/条文到执法文书案例索引 |
-| [pass4_writs.py](/home/anjie/projects/csrc-law-crawler/pass4_writs.py:1) | 执法文书详情补抓 |
-| [validate_enhance.py](/home/anjie/projects/csrc-law-crawler/validate_enhance.py:1) | 抽样回源校验 |
-| [normalize_laws.py](/home/anjie/projects/csrc-law-crawler/normalize_laws.py:1) | 法规 HTML 清洗、表格抽取、资产发现 |
-| [download_assets.py](/home/anjie/projects/csrc-law-crawler/download_assets.py:1) | 图片/附件下载与资产 manifest 回写 |
-| [validate_normalized.py](/home/anjie/projects/csrc-law-crawler/validate_normalized.py:1) | 清洗派生层和资产状态校验 |
-| [export_markdown_laws.py](/home/anjie/projects/csrc-law-crawler/export_markdown_laws.py:1) | 将 normalized 法规导出为 Markdown |
-| [neris_attachments.py](/home/anjie/projects/csrc-law-crawler/neris_attachments.py:1) | NERIS 独立附件发现和下载 |
-| [coverage_gaps.py](/home/anjie/projects/csrc-law-crawler/coverage_gaps.py:1) | 正文、附件和系列缺口检测 |
-| [amac_crawl.py](/home/anjie/projects/csrc-law-crawler/amac_crawl.py:1) | AMAC政策法规和全站补充采集 |
-| [build_catalog.py](/home/anjie/projects/csrc-law-crawler/build_catalog.py:1) | 多来源匹配和统一法规实体生成 |
-| [normalize_catalog.py](/home/anjie/projects/csrc-law-crawler/normalize_catalog.py:1) | 统一法规实体 normalized 派生层 |
-| [export_markdown_catalog.py](/home/anjie/projects/csrc-law-crawler/export_markdown_catalog.py:1) | 统一法规目录 Markdown 导出 |
-| [repair.py](/home/anjie/projects/csrc-law-crawler/repair.py:1) | P0-P2修复调度入口 |
-| [validate_catalog.py](/home/anjie/projects/csrc-law-crawler/validate_catalog.py:1) | 多来源匹配和目录引用校验 |
-| [validate_catalog_exports.py](/home/anjie/projects/csrc-law-crawler/validate_catalog_exports.py:1) | 统一目录 normalized/Markdown 覆盖校验 |
-| [prefetch_revision_evidence.py](/home/anjie/projects/csrc-law-crawler/prefetch_revision_evidence.py:1) | 可断点续跑的 NERIS 修订证据缓存 |
+| [crawl.py](crawl.py) | NERIS 法规和文书基础抓取 |
+| [enhance.py](enhance.py) | 修订、案例、文书增强阶段调度 |
+| [repair.py](repair.py) | P0–P2 多来源流水线调度 |
+| [client.py](client.py) | HTTP 限速、重试和 WAF 检测 |
+| [parser.py](parser.py) | NERIS 法规 JSON 解析 |
+| [writ_parser.py](writ_parser.py) | 执法文书 HTML 解析 |
+| [normalize_laws.py](normalize_laws.py) | 法规 HTML 清洗、表格和资产抽取 |
+| [download_assets.py](download_assets.py) | 正文内嵌资产下载 |
+| [neris_attachments.py](neris_attachments.py) | NERIS 独立附件发现和下载 |
+| [amac_crawl.py](amac_crawl.py) | AMAC 来源和附件抓取 |
+| [build_catalog.py](build_catalog.py) | 多来源匹配和统一法规实体生成 |
+| [normalize_catalog.py](normalize_catalog.py) | 统一目录内容清洗 |
+| [export_markdown_laws.py](export_markdown_laws.py) | NERIS 法规 Markdown 导出 |
+| [export_markdown_catalog.py](export_markdown_catalog.py) | 统一目录 Markdown 导出 |
+| [coverage_gaps.py](coverage_gaps.py) | 正文、附件和系列覆盖缺口检测 |
+
+## 已知限制
+
+- NERIS 原始正文包含源站 HTML；检索和 RAG 应优先使用 normalized 层。
+- 修订方向根据官方修订组内的版本号顺序推导；版本号缺失或相同不会生成方向边。
+- 自动来源匹配主要依据规范化标题、文号和发布日期，歧义项会进入 `catalog/review_queue.json`。
+- PDF、DOCX 等附件的自动抽取受文件格式、扫描质量和源站文件完整性影响。
+- `manifest.json` 主要覆盖基础法规；执法文书范围以 `relations/cases.json` 和 `writs/` 为准。
