@@ -3,6 +3,7 @@ from __future__ import annotations
 import unittest
 
 from build_catalog import choose_neris_match, normalize_title
+from normalize_catalog import plain_text_to_markdown
 from revisions_graph import UnionFind, build_revisions_document
 
 
@@ -92,6 +93,28 @@ class CatalogMatchingTests(unittest.TestCase):
         self.assertIs(match, neris)
         self.assertEqual("supplemental_copy", status)
         self.assertGreaterEqual(confidence, 0.99)
+
+
+class CatalogNormalizationTests(unittest.TestCase):
+    def test_pdf_hard_wrap_is_reflowed_into_articles(self) -> None:
+        markdown = plain_text_to_markdown(
+            "1\n某规则\n第一条 这是第\n一段内容。\n第二条 这是第二条。",
+            title="某规则",
+        )
+        self.assertIn("**第一条** 这是第一段内容。", markdown)
+        self.assertIn("**第二条** 这是第二条。", markdown)
+        self.assertNotIn("\n1\n", f"\n{markdown}\n")
+
+    def test_chapter_line_becomes_markdown_heading(self) -> None:
+        markdown = plain_text_to_markdown("第一章 总则\n第一条 内容。")
+        self.assertTrue(markdown.startswith("## 第一章 总则"))
+
+    def test_title_prefix_does_not_remove_same_line_body(self) -> None:
+        markdown = plain_text_to_markdown(
+            "某规则第一条 内容。",
+            title="某规则",
+        )
+        self.assertIn("第一条 内容。", markdown)
 
 
 if __name__ == "__main__":

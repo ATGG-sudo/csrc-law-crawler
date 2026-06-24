@@ -26,6 +26,8 @@
 | AMAC 页面及附件来源记录 | 664 |
 | AMAC 已下载附件 | 175 |
 | 统一法规实体 `catalog/laws` | 3852 |
+| 统一目录 normalized `catalog/normalized/laws` | 3852 |
+| 统一目录 Markdown `catalog/markdown/laws` | 3852 |
 | AMAC 新增于 NERIS 的来源记录 | 429 |
 | 清洗派生法规 `normalized/laws` | 3422 |
 | 清洗抽取表格 | 1276 |
@@ -64,6 +66,7 @@
 - 正文内嵌资产共 274 个，已下载 126 个、失败 148 个；失败主要是官网 `rdqsHeader/file/...` 返回空响应，详见 `assets/assets_failures.json`。
 - `coverage_gaps.json` 当前记录 26 个源站缺正文、428 个下载失败和 9 个待人工复核的系列编号缺口。
 - AMAC 补充层共提供 664 条页面/附件来源记录，匹配结果为：NERIS 未收录 429、同文 219、正文更完整的补充副本 15、歧义 1。
+- 统一目录 3852 个实体均已生成 normalized JSON 和 Markdown；其中 10 个模板、XBRL 或旧格式附件无法自动抽取正文，Markdown 会明确标记为 `metadata_only` 并保留官方来源及本地附件链接。
 - 25 份本地文书没有 `legal_basis`。抽检显示这通常来自官网详情页本身没有结构化处理依据，或旧文书页面结构较弱。
 - `manifest.json` 当前只覆盖法规文件；文书以 `relations/cases.json` 的 `writ_ids` 和 `writs/` 文件为准。
 
@@ -103,6 +106,9 @@ python amac_crawl.py
 # P2：来源匹配和统一法规实体
 python build_catalog.py
 python validate_catalog.py
+python normalize_catalog.py --force --clean
+python export_markdown_catalog.py --force --clean
+python validate_catalog_exports.py
 ```
 
 修订关系重建会清除旧 `revision_ref`。旧版 `revisions.json` 不允许被增量复用，必须显式使用 `--rebuild-relations`。
@@ -174,6 +180,15 @@ OUTPUT_DIR/
 ├── catalog/
 │   ├── laws/
 │   │   └── law_{canonical_id}.json
+│   ├── normalized/
+│   │   ├── laws/
+│   │   │   └── law_{canonical_id}.json
+│   │   └── manifest.json
+│   ├── markdown/
+│   │   ├── laws/
+│   │   │   ├── current/
+│   │   │   └── other/
+│   │   └── manifest.json
 │   ├── manifest.json
 │   └── review_queue.json
 ├── normalized/
@@ -561,6 +576,9 @@ top_level_md 0
 | [coverage_gaps.py](/home/anjie/projects/csrc-law-crawler/coverage_gaps.py:1) | 正文、附件和系列缺口检测 |
 | [amac_crawl.py](/home/anjie/projects/csrc-law-crawler/amac_crawl.py:1) | AMAC政策法规和全站补充采集 |
 | [build_catalog.py](/home/anjie/projects/csrc-law-crawler/build_catalog.py:1) | 多来源匹配和统一法规实体生成 |
+| [normalize_catalog.py](/home/anjie/projects/csrc-law-crawler/normalize_catalog.py:1) | 统一法规实体 normalized 派生层 |
+| [export_markdown_catalog.py](/home/anjie/projects/csrc-law-crawler/export_markdown_catalog.py:1) | 统一法规目录 Markdown 导出 |
 | [repair.py](/home/anjie/projects/csrc-law-crawler/repair.py:1) | P0-P2修复调度入口 |
 | [validate_catalog.py](/home/anjie/projects/csrc-law-crawler/validate_catalog.py:1) | 多来源匹配和目录引用校验 |
+| [validate_catalog_exports.py](/home/anjie/projects/csrc-law-crawler/validate_catalog_exports.py:1) | 统一目录 normalized/Markdown 覆盖校验 |
 | [prefetch_revision_evidence.py](/home/anjie/projects/csrc-law-crawler/prefetch_revision_evidence.py:1) | 可断点续跑的 NERIS 修订证据缓存 |

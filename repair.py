@@ -11,10 +11,13 @@ from build_catalog import build_catalog
 from client import HumanLikeClient
 from coverage_gaps import detect_coverage_gaps
 from download_assets import rebuild_asset_manifests
+from export_markdown_catalog import export_catalog_markdown
 from neris_attachments import run as run_neris_attachments
+from normalize_catalog import normalize_catalog
 from normalize_laws import normalize_laws
 from pass2_relations import run_pass2
 from prefetch_revision_evidence import prefetch
+from validate_catalog_exports import validate_catalog_exports
 
 
 def main() -> int:
@@ -89,6 +92,19 @@ def main() -> int:
 
         if "p2" in phases:
             build_catalog(clean=True)
+            normalize_catalog(
+                force=True,
+                clean=True,
+            )
+            export_catalog_markdown(
+                force=True,
+                clean=True,
+            )
+            issues, _summary = validate_catalog_exports()
+            if issues:
+                raise RuntimeError(
+                    f"统一目录 normalized/Markdown 校验失败 {len(issues)} 项"
+                )
     except KeyboardInterrupt:
         return 130
     except Exception as exc:

@@ -59,6 +59,14 @@ def catalog_laws_dir() -> Path:
     return catalog_dir() / "laws"
 
 
+def catalog_normalized_dir() -> Path:
+    return catalog_dir() / "normalized" / "laws"
+
+
+def catalog_markdown_dir() -> Path:
+    return catalog_dir() / "markdown" / "laws"
+
+
 def checkpoint_path() -> Path:
     return OUTPUT_DIR / CHECKPOINT_NAME
 
