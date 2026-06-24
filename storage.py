@@ -1,0 +1,118 @@
+"""路径、checkpoint 与 JSON 读写。"""
+
+from __future__ import annotations
+
+import json
+from datetime import datetime, timezone
+from pathlib import Path
+from typing import Any
+
+from config import LAWS_SUBDIR, OUTPUT_DIR, WRITS_SUBDIR
+
+CHECKPOINT_NAME = "checkpoint.json"
+MANIFEST_NAME = "manifest.json"
+RELATIONS_SUBDIR = "relations"
+REVISIONS_NAME = "revisions.json"
+RELATED_LAWS_NAME = "related_laws.json"
+CASES_NAME = "cases.json"
+
+
+def utc_now_iso() -> str:
+    return datetime.now(tz=timezone.utc).isoformat()
+
+
+def laws_dir() -> Path:
+    return OUTPUT_DIR / LAWS_SUBDIR
+
+
+def writs_dir() -> Path:
+    return OUTPUT_DIR / WRITS_SUBDIR
+
+
+def relations_dir() -> Path:
+    return OUTPUT_DIR / RELATIONS_SUBDIR
+
+
+def checkpoint_path() -> Path:
+    return OUTPUT_DIR / CHECKPOINT_NAME
+
+
+def manifest_path() -> Path:
+    return OUTPUT_DIR / MANIFEST_NAME
+
+
+def revisions_path() -> Path:
+    return relations_dir() / REVISIONS_NAME
+
+
+def related_laws_path() -> Path:
+    return relations_dir() / RELATED_LAWS_NAME
+
+
+def cases_path() -> Path:
+    return relations_dir() / CASES_NAME
+
+
+def reg_file_path(law_id: str) -> Path:
+    return laws_dir() / f"reg_{law_id}.json"
+
+
+def writ_file_path(writ_id: str) -> Path:
+    return writs_dir() / f"writ_{writ_id}.json"
+
+
+def load_json(path: Path, default: Any) -> Any:
+    if not path.exists():
+        return default
+    with path.open("r", encoding="utf-8") as f:
+        return json.load(f)
+
+
+def save_json(path: Path, data: Any) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_suffix(path.suffix + ".tmp")
+    with tmp.open("w", encoding="utf-8") as f:
+        json.dump(data, f, ensure_ascii=False, indent=2)
+    tmp.replace(path)
+
+
+def load_checkpoint() -> dict[str, Any]:
+    return load_json(
+        checkpoint_path(),
+        {
+            "started_at": utc_now_iso(),
+            "completed_ids": {"regulations": [], "writs": []},
+        },
+    )
+
+
+def save_checkpoint(checkpoint: dict[str, Any]) -> None:
+    checkpoint["updated_at"] = utc_now_iso()
+    save_json(checkpoint_path(), checkpoint)
+
+
+def iter_reg_law_ids(limit: int | None = None) -> list[str]:
+    files = sorted(laws_dir().glob("reg_*.json"))
+    if limit is not None:
+        files = files[:limit]
+    return [f.stem.removeprefix("reg_") for f in files]
+
+
+def load_reg_metadata(law_id: str) -> dict[str, Any] | None:
+    path = reg_file_path(law_id)
+    if not path.exists():
+        return None
+    data = load_json(path, {})
+    return data.get("metadata") or None
+
+
+def patch_reg_revision_ref(law_id: str, family_key: str) -> None:
+    path = reg_file_path(law_id)
+    if not path.exists():
+        return
+    data = load_json(path, {})
+    data["revision_ref"] = {
+        "csrc_number": family_key,
+        "relations_file": f"{RELATIONS_SUBDIR}/{REVISIONS_NAME}",
+    }
+    save_json(path, data)
