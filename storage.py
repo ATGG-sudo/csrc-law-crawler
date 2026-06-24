@@ -7,7 +7,13 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from config import LAWS_SUBDIR, OUTPUT_DIR, WRITS_SUBDIR
+from config import (
+    CATALOG_SUBDIR,
+    LAWS_SUBDIR,
+    OUTPUT_DIR,
+    SOURCES_SUBDIR,
+    WRITS_SUBDIR,
+)
 
 CHECKPOINT_NAME = "checkpoint.json"
 MANIFEST_NAME = "manifest.json"
@@ -15,6 +21,10 @@ RELATIONS_SUBDIR = "relations"
 REVISIONS_NAME = "revisions.json"
 RELATED_LAWS_NAME = "related_laws.json"
 CASES_NAME = "cases.json"
+COVERAGE_GAPS_NAME = "coverage_gaps.json"
+SOURCE_MATCHES_NAME = "source_matches.json"
+CATALOG_RELATIONS_NAME = "catalog_relations.json"
+REVISION_EVIDENCE_CACHE_SUBDIR = "revision_evidence_cache"
 
 
 def utc_now_iso() -> str:
@@ -31,6 +41,22 @@ def writs_dir() -> Path:
 
 def relations_dir() -> Path:
     return OUTPUT_DIR / RELATIONS_SUBDIR
+
+
+def sources_dir() -> Path:
+    return OUTPUT_DIR / SOURCES_SUBDIR
+
+
+def amac_sources_dir() -> Path:
+    return sources_dir() / "amac"
+
+
+def catalog_dir() -> Path:
+    return OUTPUT_DIR / CATALOG_SUBDIR
+
+
+def catalog_laws_dir() -> Path:
+    return catalog_dir() / "laws"
 
 
 def checkpoint_path() -> Path:
@@ -51,6 +77,26 @@ def related_laws_path() -> Path:
 
 def cases_path() -> Path:
     return relations_dir() / CASES_NAME
+
+
+def coverage_gaps_path() -> Path:
+    return relations_dir() / COVERAGE_GAPS_NAME
+
+
+def source_matches_path() -> Path:
+    return relations_dir() / SOURCE_MATCHES_NAME
+
+
+def catalog_relations_path() -> Path:
+    return relations_dir() / CATALOG_RELATIONS_NAME
+
+
+def revision_evidence_cache_dir() -> Path:
+    return relations_dir() / REVISION_EVIDENCE_CACHE_SUBDIR
+
+
+def revision_evidence_cache_path(law_id: str) -> Path:
+    return revision_evidence_cache_dir() / f"{law_id}.json"
 
 
 def reg_file_path(law_id: str) -> Path:
@@ -112,7 +158,19 @@ def patch_reg_revision_ref(law_id: str, family_key: str) -> None:
         return
     data = load_json(path, {})
     data["revision_ref"] = {
-        "csrc_number": family_key,
+        "family_id": family_key,
         "relations_file": f"{RELATIONS_SUBDIR}/{REVISIONS_NAME}",
     }
     save_json(path, data)
+
+
+def clear_reg_revision_refs() -> int:
+    changed = 0
+    for path in sorted(laws_dir().glob("reg_*.json")):
+        data = load_json(path, {})
+        if "revision_ref" not in data:
+            continue
+        data.pop("revision_ref", None)
+        save_json(path, data)
+        changed += 1
+    return changed

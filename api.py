@@ -19,6 +19,20 @@ def fetch_relative_files(client: HumanLikeClient, law_id: str) -> dict[str, Any]
     )
 
 
+def fetch_local_files(client: HumanLikeClient, law_id: str) -> dict[str, Any]:
+    return client.post_json(
+        "rdqsHeader/findLocalFile",
+        {"secFutrsLawId": law_id, "navbarId": "1"},
+    )
+
+
+def local_file_download_url(law_attachment_id: str) -> str:
+    return (
+        "https://neris.csrc.gov.cn/falvfagui/"
+        f"rdqsHeader/downloadLocal?lawAtchId={law_attachment_id}"
+    )
+
+
 def fetch_count_law_writ(client: HumanLikeClient, law_id: str) -> dict[str, Any]:
     return client.post_json(
         "rdqsHeader/countLawWrit",

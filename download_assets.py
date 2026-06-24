@@ -291,11 +291,85 @@ def download_assets(
     return manifest
 
 
+def rebuild_asset_manifests() -> dict[str, Any]:
+    """Re-index current embedded-asset state without making network requests."""
+    manifest_items: list[dict[str, Any]] = []
+    failures: list[dict[str, Any]] = []
+    seen_assets = 0
+    ok_assets = 0
+    failed_assets = 0
+    pending_assets = 0
+
+    for path in sorted(normalized_laws_dir().glob("reg_*.json")):
+        doc = load_json(path, {})
+        metadata = doc.get("metadata") or {}
+        law_id = str(metadata.get("id") or path.stem.removeprefix("reg_"))
+        embedded_assets = [
+            asset
+            for asset in (doc.get("assets") or [])
+            if not asset.get("source_attachment_id")
+        ]
+        if not embedded_assets:
+            continue
+        seen_assets += len(embedded_assets)
+        for asset in embedded_assets:
+            record = _asset_record(law_id, asset)
+            status = asset.get("download_status")
+            if status == "ok":
+                ok_assets += 1
+                manifest_items.append(record)
+            elif status == "failed":
+                failed_assets += 1
+                failures.append(
+                    record | {"error": asset.get("download_error")}
+                )
+            else:
+                pending_assets += 1
+
+        law_manifest = {
+            "updated_at": utc_now_iso(),
+            "law_id": law_id,
+            "law_name": metadata.get("name"),
+            "normalized_file": str(path.relative_to(OUTPUT_DIR)),
+            "assets": [
+                _asset_record(law_id, asset) for asset in embedded_assets
+            ],
+        }
+        save_json(LAW_ASSETS_ROOT / law_id / "asset_manifest.json", law_manifest)
+
+    manifest = {
+        "updated_at": utc_now_iso(),
+        "normalized_dir": str(normalized_laws_dir().relative_to(OUTPUT_DIR)),
+        "assets_root": str(ASSETS_ROOT.relative_to(OUTPUT_DIR)),
+        "seen_assets": seen_assets,
+        "downloaded": 0,
+        "skipped": ok_assets,
+        "failed": failed_assets,
+        "pending": pending_assets,
+        "items": manifest_items,
+    }
+    save_json(ASSETS_MANIFEST, manifest)
+    save_json(
+        ASSET_FAILURES,
+        {
+            "updated_at": utc_now_iso(),
+            "failed": failed_assets,
+            "items": failures,
+        },
+    )
+    return manifest
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="下载法规清洗阶段发现的图片和附件")
     parser.add_argument("--limit-laws", type=int, default=None, help="仅扫描前 N 个 normalized 法规")
     parser.add_argument("--limit-assets", type=int, default=None, help="最多下载/检查 N 个资产")
     parser.add_argument("--force", action="store_true", help="即使已有本地文件也重新下载")
+    parser.add_argument(
+        "--manifest-only",
+        action="store_true",
+        help="仅从 normalized/laws 重建资产清单，不发起下载",
+    )
     args = parser.parse_args()
 
     if not normalized_laws_dir().exists():
@@ -303,11 +377,14 @@ def main() -> int:
         return 2
 
     try:
-        manifest = download_assets(
-            limit_laws=args.limit_laws,
-            limit_assets=args.limit_assets,
-            force=args.force,
-        )
+        if args.manifest_only:
+            manifest = rebuild_asset_manifests()
+        else:
+            manifest = download_assets(
+                limit_laws=args.limit_laws,
+                limit_assets=args.limit_assets,
+                force=args.force,
+            )
     except KeyboardInterrupt:
         print("已中断", file=sys.stderr)
         return 130

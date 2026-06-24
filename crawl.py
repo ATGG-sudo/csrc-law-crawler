@@ -16,6 +16,7 @@ from config import (
     PAGE_SIZE,
 )
 from parser import build_law_document
+from neris_attachments import update_law_attachments
 from storage import (
     checkpoint_path,
     laws_dir,
@@ -56,6 +57,7 @@ def crawl_type(
     law_type: int,
     checkpoint: dict[str, Any],
     limit: int | None = None,
+    fetch_attachments: bool = True,
 ) -> None:
     type_key = "regulations" if law_type == LAW_TYPE_REGULATION else "writs"
     done_ids: set[str] = set(checkpoint.get("completed_ids", {}).get(type_key, []))
@@ -121,6 +123,12 @@ def crawl_type(
                         ),
                     }
                     save_json(out_path, document)
+                    if fetch_attachments:
+                        update_law_attachments(
+                            client,
+                            law_id,
+                            download=False,
+                        )
                 else:
                     fetch_and_save_writ(client, law_id, list_row=summary)
 
@@ -175,6 +183,11 @@ def main() -> int:
         default=None,
         help="仅抓取前 N 条（调试用）",
     )
+    parser.add_argument(
+        "--skip-attachments",
+        action="store_true",
+        help="法规抓取时不查询 NERIS 独立附件列表",
+    )
     args = parser.parse_args()
 
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
@@ -194,7 +207,13 @@ def main() -> int:
     print(f"开始时间: {checkpoint['started_at']}")
 
     if args.types in ("regulation", "all"):
-        crawl_type(client, LAW_TYPE_REGULATION, checkpoint, args.limit)
+        crawl_type(
+            client,
+            LAW_TYPE_REGULATION,
+            checkpoint,
+            args.limit,
+            fetch_attachments=not args.skip_attachments,
+        )
     if args.types in ("writ", "all"):
         crawl_type(client, LAW_TYPE_WRIT, checkpoint, args.limit)
 

@@ -30,6 +30,23 @@ def main() -> int:
         help="pass2 不回写 reg_*.json 的 revision_ref",
     )
     parser.add_argument(
+        "--rebuild-relations",
+        action="store_true",
+        help="pass2 丢弃旧修订关系并从官网重新拉取",
+    )
+    parser.add_argument(
+        "--skip-related-laws",
+        action="store_true",
+        help="pass2 仅重建修订关系，不重新拉取关联法规",
+    )
+    parser.add_argument(
+        "--refresh-revision-cache",
+        action="store_true",
+        help="忽略本地 changeLaw 证据缓存并重新请求",
+    )
+    parser.add_argument("--delay-min", type=float, default=None)
+    parser.add_argument("--delay-max", type=float, default=None)
+    parser.add_argument(
         "--skip-law-level-cases",
         action="store_true",
         help="pass3 跳过法规级案例拉取",
@@ -65,7 +82,12 @@ def main() -> int:
     checkpoint.setdefault("enhance_started_at", utc_now_iso())
     save_checkpoint(checkpoint)
 
-    client = HumanLikeClient()
+    client_kwargs = {}
+    if args.delay_min is not None:
+        client_kwargs["delay_min"] = args.delay_min
+    if args.delay_max is not None:
+        client_kwargs["delay_max"] = args.delay_max
+    client = HumanLikeClient(**client_kwargs)
     print(f"输出目录: {OUTPUT_DIR}")
 
     if "2" in run_list:
@@ -73,6 +95,9 @@ def main() -> int:
             client,
             limit=args.limit,
             patch_revision_ref=not args.no_patch_revision_ref,
+            rebuild=args.rebuild_relations,
+            fetch_related=not args.skip_related_laws,
+            refresh_revision_cache=args.refresh_revision_cache,
         )
     if "3" in run_list:
         run_pass3(

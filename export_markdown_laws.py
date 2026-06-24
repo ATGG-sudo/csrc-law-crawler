@@ -157,7 +157,7 @@ def _front_matter(metadata: dict[str, Any], doc: dict[str, Any]) -> str:
         lines.append(f"{key}: {_yaml_scalar(value)}")
     revision_ref = doc.get("revision_ref") or {}
     if revision_ref:
-        lines.append(f"revision_ref: {_yaml_scalar(revision_ref.get('csrc_number'))}")
+        lines.append(f"revision_ref: {_yaml_scalar(revision_ref.get('family_id'))}")
     lines.append("---")
     return "\n".join(lines)
 

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 from pathlib import Path
 from typing import Any
 
@@ -66,63 +67,91 @@ def normalize_version_node(
 def build_revisions_document(
     version_records: dict[str, dict[str, Any]],
     uf: UnionFind,
+    evidence_records: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
-    """按 union-find 根合并版本节点，生成 families / edges / by_law_id。"""
+    """Build revision families only from official revision-history evidence."""
     families_raw: dict[str, dict[str, dict[str, Any]]] = {}
+    evidence_records = evidence_records or []
 
     for law_id, node in version_records.items():
         root = uf.find(law_id)
         families_raw.setdefault(root, {})[law_id] = node
 
-    family_buckets: dict[str, dict[str, dict[str, Any]]] = {}
     by_law_id: dict[str, str] = {}
-
-    for _root, nodes_map in families_raw.items():
-        nodes = list(nodes_map.values())
-        numbers = {str(n["csrc_number"]) for n in nodes if n.get("csrc_number")}
-        if len(numbers) == 1:
-            family_key = next(iter(numbers))
-        elif numbers:
-            family_key = sorted(numbers)[0]
-        else:
-            family_key = f"id:{nodes[0]['id']}"
-
-        # Multiple union-find roots can share the same CSRC number.  The CSRC
-        # number is our public family key, so merge those roots instead of
-        # overwriting the earlier family.
-        bucket = family_buckets.setdefault(family_key, {})
-        for law_id, node in nodes_map.items():
-            bucket[law_id] = {**bucket.get(law_id, {}), **node}
-
     families: dict[str, Any] = {}
-    for family_key, nodes_map in family_buckets.items():
+
+    for nodes_map in families_raw.values():
         nodes = list(nodes_map.values())
+        member_ids = sorted(str(node["id"]) for node in nodes if node.get("id"))
+        if len(member_ids) == 1:
+            family_key = f"id:{member_ids[0]}"
+        else:
+            digest = hashlib.sha1("|".join(member_ids).encode("utf-8")).hexdigest()[:20]
+            family_key = f"neris:{digest}"
+
         sorted_nodes = sorted(
             nodes,
             key=lambda n: version_sort_key(n.get("version")),
             reverse=True,
         )
+        member_set = set(member_ids)
+        family_evidence = []
+        for evidence in evidence_records:
+            evidence_members = {
+                str(value) for value in (evidence.get("member_ids") or []) if value
+            }
+            if len(member_set & evidence_members) >= 2:
+                family_evidence.append(evidence)
+
         edges = []
-        for i in range(len(sorted_nodes) - 1):
-            edges.append(
-                {
-                    "from": sorted_nodes[i]["id"],
-                    "to": sorted_nodes[i + 1]["id"],
-                    "relation": "supersedes",
-                }
-            )
+        if family_evidence:
+            for i in range(len(sorted_nodes) - 1):
+                newer_version = version_sort_key(sorted_nodes[i].get("version"))
+                older_version = version_sort_key(
+                    sorted_nodes[i + 1].get("version")
+                )
+                if (
+                    newer_version <= 0
+                    or older_version <= 0
+                    or newer_version <= older_version
+                ):
+                    continue
+                edges.append(
+                    {
+                        "from": sorted_nodes[i]["id"],
+                        "to": sorted_nodes[i + 1]["id"],
+                        "relation": "supersedes",
+                        "source": "neris.changeLaw",
+                        "evidence": [
+                            {
+                                "queried_law_id": item.get("queried_law_id"),
+                                "member_ids": item.get("member_ids") or [],
+                            }
+                            for item in family_evidence
+                        ],
+                        "confidence": 0.95,
+                        "inference": "version_order_within_official_revision_group",
+                    }
+                )
 
         families[family_key] = {
-            "family_key": family_key,
+            "family_id": family_key,
             "versions": sorted_nodes,
             "edges": edges,
+            "evidence": family_evidence,
         }
         for node in sorted_nodes:
             if node.get("id"):
                 by_law_id[str(node["id"])] = family_key
 
     return {
+        "schema_version": 2,
         "updated_at": utc_now_iso(),
+        "generation_policy": {
+            "family_membership": "neris.changeLaw evltList only",
+            "edge_policy": "adjacent versions ordered within an official revision group",
+            "csrc_number_used_for_grouping": False,
+        },
         "families": families,
         "by_law_id": by_law_id,
     }

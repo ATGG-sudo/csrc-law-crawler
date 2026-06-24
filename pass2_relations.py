@@ -12,12 +12,14 @@ from revisions_graph import (
     normalize_version_node,
 )
 from storage import (
+    clear_reg_revision_refs,
     iter_reg_law_ids,
     load_checkpoint,
     load_reg_metadata,
     load_json,
     patch_reg_revision_ref,
     related_laws_path,
+    revision_evidence_cache_path,
     revisions_path,
     save_checkpoint,
     save_json,
@@ -44,20 +46,25 @@ def _normalize_related_item(item: dict[str, Any]) -> dict[str, Any]:
 def _load_existing_revisions_state(
     version_records: dict[str, dict[str, Any]],
     uf: UnionFind,
-) -> None:
+) -> list[dict[str, Any]]:
     existing = load_json(revisions_path(), {})
+    if existing.get("schema_version") != 2:
+        return []
+    evidence_records: list[dict[str, Any]] = []
     for family in (existing.get("families") or {}).values():
+        member_ids: list[str] = []
         for node in family.get("versions") or []:
             law_id = str(node.get("id") or "")
             if not law_id:
                 continue
             version_records[law_id] = node
             uf.add(law_id)
-        for edge in family.get("edges") or []:
-            src = str(edge.get("from") or "")
-            dst = str(edge.get("to") or "")
-            if src and dst:
-                uf.union(src, dst)
+            member_ids.append(law_id)
+        if len(member_ids) > 1:
+            for law_id in member_ids[1:]:
+                uf.union(member_ids[0], law_id)
+        evidence_records.extend(family.get("evidence") or [])
+    return evidence_records
 
 
 def run_pass2(
@@ -65,9 +72,17 @@ def run_pass2(
     *,
     limit: int | None = None,
     patch_revision_ref: bool = True,
+    rebuild: bool = False,
+    fetch_related: bool = True,
+    refresh_revision_cache: bool = False,
 ) -> None:
     checkpoint = load_checkpoint()
     pass_state = checkpoint.setdefault("pass2", {"completed_ids": [], "failures": []})
+    if rebuild:
+        pass_state["completed_ids"] = []
+        pass_state["failures"] = []
+        pass_state.pop("finished_at", None)
+        print(f"  已清理旧 revision_ref: {clear_reg_revision_refs()} 个")
     done: set[str] = set(pass_state.get("completed_ids") or [])
 
     law_ids = iter_reg_law_ids(limit=limit)
@@ -79,7 +94,13 @@ def run_pass2(
         related_laws_path(), {"updated_at": None, "items": {}}
     ).get("items", {})
     uf = UnionFind()
-    _load_existing_revisions_state(version_records, uf)
+    evidence_records = (
+        [] if rebuild else _load_existing_revisions_state(version_records, uf)
+    )
+    if not rebuild and done and not version_records:
+        raise RuntimeError(
+            "检测到旧版或缺失的 revisions.json；请使用 --rebuild-relations 重建"
+        )
 
     for idx, law_id in enumerate(law_ids, start=1):
         if law_id in done:
@@ -89,7 +110,12 @@ def run_pass2(
         print(f"[{idx}/{total}] {name}")
 
         try:
-            change_resp = fetch_change_law(client, law_id)
+            cache_path = revision_evidence_cache_path(law_id)
+            if cache_path.exists() and not refresh_revision_cache:
+                change_resp = load_json(cache_path, {})
+            else:
+                change_resp = fetch_change_law(client, law_id)
+                save_json(cache_path, change_resp)
             law = change_resp.get("law") or {}
             current_id = str(law.get("secFutrsLawId") or law_id)
             local_meta = load_reg_metadata(current_id) or meta
@@ -98,6 +124,7 @@ def run_pass2(
             version_records[current_id] = current_node
             uf.add(current_id)
 
+            revision_member_ids = {current_id}
             for evlt in change_resp.get("evltList") or []:
                 evlt_id = str(evlt.get("secFutrsLawId") or "")
                 if not evlt_id:
@@ -108,24 +135,43 @@ def run_pass2(
                 )
                 uf.add(evlt_id)
                 uf.union(current_id, evlt_id)
+                revision_member_ids.add(evlt_id)
 
-            rel_resp = fetch_relative_files(client, law_id)
-            put_list = rel_resp.get("putLawList") or []
-            normalized = [_normalize_related_item(x) for x in put_list if isinstance(x, dict)]
-            if normalized:
-                existing = related_items.get(law_id, [])
-                seen = {(x.get("to_law_id"), x.get("name")) for x in existing}
-                for item in normalized:
-                    key = (item.get("to_law_id"), item.get("name"))
-                    if key not in seen:
-                        existing.append(item)
-                        seen.add(key)
-                related_items[law_id] = existing
+            if len(revision_member_ids) > 1:
+                evidence_records.append(
+                    {
+                        "source": "neris.changeLaw",
+                        "queried_law_id": law_id,
+                        "member_ids": sorted(revision_member_ids),
+                        "retrieved_at": utc_now_iso(),
+                    }
+                )
+
+            if fetch_related:
+                rel_resp = fetch_relative_files(client, law_id)
+                put_list = rel_resp.get("putLawList") or []
+                normalized = [
+                    _normalize_related_item(x)
+                    for x in put_list
+                    if isinstance(x, dict)
+                ]
+                if normalized:
+                    existing = related_items.get(law_id, [])
+                    seen = {
+                        (x.get("to_law_id"), x.get("name")) for x in existing
+                    }
+                    for item in normalized:
+                        key = (item.get("to_law_id"), item.get("name"))
+                        if key not in seen:
+                            existing.append(item)
+                            seen.add(key)
+                    related_items[law_id] = existing
 
             done.add(law_id)
             if law_id not in pass_state["completed_ids"]:
                 pass_state["completed_ids"].append(law_id)
-            save_checkpoint(checkpoint)
+            if idx % 25 == 0 or idx == total:
+                save_checkpoint(checkpoint)
 
         except Exception as exc:
             print(f"  !! 失败: {exc}")
@@ -134,7 +180,11 @@ def run_pass2(
             )
             save_checkpoint(checkpoint)
 
-    revisions_doc = build_revisions_document(version_records, uf)
+    revisions_doc = build_revisions_document(
+        version_records,
+        uf,
+        evidence_records=evidence_records,
+    )
     save_json(revisions_path(), revisions_doc)
     save_json(
         related_laws_path(),

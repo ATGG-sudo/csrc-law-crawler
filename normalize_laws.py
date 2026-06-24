@@ -396,6 +396,20 @@ def build_normalized_law(path: Path) -> dict[str, Any]:
         context=metadata.get("name") or law_id,
     )
 
+    source_attachment_state: dict[str, dict[str, Any]] = {}
+    for attachment in source.get("source_attachments") or []:
+        source_url = attachment.get("source_url")
+        if not source_url:
+            continue
+        asset = normalizer.register_asset(
+            kind="attachment",
+            ref=str(source_url),
+            label=attachment.get("name") or "附件",
+            section="source_attachment",
+            context=metadata.get("name") or law_id,
+        )
+        source_attachment_state[asset["asset_id"]] = attachment
+
     normalized_entries: list[dict[str, Any]] = []
     for entry in source.get("entries") or []:
         entry_id = entry.get("entry_id")
@@ -468,6 +482,55 @@ def build_normalized_law(path: Path) -> dict[str, Any]:
     if body_aft["markdown"]:
         markdown_parts.append(body_aft["markdown"])
 
+    assets = normalizer.assets()
+    prior_normalized = load_json(normalized_laws_dir() / path.name, {})
+    prior_asset_manifest = load_json(
+        OUTPUT_DIR / ASSETS_SUBDIR / "laws" / law_id / "asset_manifest.json",
+        {},
+    )
+    prior_assets = {
+        str(item.get("asset_id")): item
+        for item in (prior_asset_manifest.get("assets") or [])
+        if item.get("asset_id")
+    }
+    prior_assets.update(
+        {
+            str(item.get("asset_id")): item
+            for item in (prior_normalized.get("assets") or [])
+            if item.get("asset_id")
+        }
+    )
+    for asset in assets:
+        prior = prior_assets.get(str(asset.get("asset_id")))
+        if prior:
+            asset.update(
+                {
+                    key: prior.get(key)
+                    for key in (
+                        "local_file",
+                        "content_type",
+                        "sha256",
+                        "size_bytes",
+                        "download_status",
+                        "download_error",
+                    )
+                    if prior.get(key) is not None
+                }
+            )
+        attachment = source_attachment_state.get(str(asset.get("asset_id")))
+        if attachment:
+            asset.update(
+                {
+                    "local_file": attachment.get("local_file"),
+                    "content_type": attachment.get("content_type"),
+                    "sha256": attachment.get("sha256"),
+                    "size_bytes": attachment.get("size_bytes"),
+                    "download_status": attachment.get("download_status") or "pending",
+                    "download_error": attachment.get("download_error"),
+                    "source_attachment_id": attachment.get("attachment_id"),
+                }
+            )
+
     return {
         "source_file": source_file,
         "normalized_at": utc_now_iso(),
@@ -481,7 +544,7 @@ def build_normalized_law(path: Path) -> dict[str, Any]:
         "full_text_plain": "\n\n".join(part for part in plain_parts if part),
         "full_text_markdown": "\n\n".join(part for part in markdown_parts if part),
         "tables": normalizer.tables,
-        "assets": normalizer.assets(),
+        "assets": assets,
     }
 
 

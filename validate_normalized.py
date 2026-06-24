@@ -39,6 +39,8 @@ def validate_normalized(*, sample: int = 5) -> tuple[list[str], dict[str, Any]]:
     pending_assets = 0
     ok_assets = 0
     failed_assets = 0
+    embedded_failed_assets = 0
+    source_attachment_failed_assets = 0
     missing_local_files: list[tuple[str, str]] = []
 
     for path in normalized_files:
@@ -63,6 +65,10 @@ def validate_normalized(*, sample: int = 5) -> tuple[list[str], dict[str, Any]]:
                     missing_local_files.append((path.name, asset.get("asset_id") or ""))
             elif status == "failed":
                 failed_assets += 1
+                if asset.get("source_attachment_id"):
+                    source_attachment_failed_assets += 1
+                else:
+                    embedded_failed_assets += 1
             else:
                 pending_assets += 1
 
@@ -82,9 +88,14 @@ def validate_normalized(*, sample: int = 5) -> tuple[list[str], dict[str, Any]]:
         )
 
     assets_manifest = load_json(ASSETS_MANIFEST, {})
-    if assets_manifest and assets_manifest.get("failed", 0) != failed_assets:
+    if (
+        assets_manifest
+        and assets_manifest.get("failed", 0) != embedded_failed_assets
+    ):
         issues.append(
-            f"assets_manifest failed={assets_manifest.get('failed')} != normalized failed={failed_assets}"
+            "assets_manifest failed="
+            f"{assets_manifest.get('failed')} != normalized embedded failed="
+            f"{embedded_failed_assets}"
         )
 
     summary = {
@@ -95,6 +106,8 @@ def validate_normalized(*, sample: int = 5) -> tuple[list[str], dict[str, Any]]:
         "assets_ok": ok_assets,
         "assets_pending": pending_assets,
         "assets_failed": failed_assets,
+        "embedded_assets_failed": embedded_failed_assets,
+        "source_attachments_failed": source_attachment_failed_assets,
         "html_in_plain": len(html_in_plain),
         "html_in_markdown": len(html_in_markdown),
         "missing_source": len(missing_source),

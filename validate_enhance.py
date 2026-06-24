@@ -72,6 +72,7 @@ def _simulate_pass2_family(
     law_ids: list[str], client: HumanLikeClient
 ) -> dict[str, Any]:
     version_records: dict[str, dict[str, Any]] = {}
+    evidence_records: list[dict[str, Any]] = []
     uf = UnionFind()
     for law_id in law_ids:
         change_resp = fetch_change_law(client, law_id)
@@ -80,6 +81,7 @@ def _simulate_pass2_family(
         local_meta = load_reg_metadata(current_id) or load_reg_metadata(law_id)
         version_records[current_id] = normalize_version_node(law, local_meta=local_meta)
         uf.add(current_id)
+        member_ids = {current_id}
         for evlt in change_resp.get("evltList") or []:
             evlt_id = str(evlt.get("secFutrsLawId") or "")
             if not evlt_id:
@@ -90,7 +92,20 @@ def _simulate_pass2_family(
             )
             uf.add(evlt_id)
             uf.union(current_id, evlt_id)
-    return build_revisions_document(version_records, uf)
+            member_ids.add(evlt_id)
+        if len(member_ids) > 1:
+            evidence_records.append(
+                {
+                    "source": "neris.changeLaw",
+                    "queried_law_id": law_id,
+                    "member_ids": sorted(member_ids),
+                }
+            )
+    return build_revisions_document(
+        version_records,
+        uf,
+        evidence_records=evidence_records,
+    )
 
 
 def validate_pass2(client: HumanLikeClient, sample_size: int) -> list[str]:
@@ -118,7 +133,7 @@ def validate_pass2(client: HumanLikeClient, sample_size: int) -> list[str]:
         ref = data.get("revision_ref")
         # revision_ref 仅在 pass2 全部结束后写入；运行中可能为空
         if ref:
-            fk = ref.get("csrc_number")
+            fk = ref.get("family_id")
             rev_doc = load_json(revisions_path(), {})
             fam = (rev_doc.get("families") or {}).get(str(fk))
             if not fam:
