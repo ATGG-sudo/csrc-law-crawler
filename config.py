@@ -6,11 +6,10 @@ BASE_URL = "https://neris.csrc.gov.cn/falvfagui/"
 AMAC_BASE_URL = "https://www.amac.org.cn/"
 AMAC_RULES_BASE_URL = "https://fg.amac.org.cn/"
 OUTPUT_DIR = Path("/mnt/d/FUND_COMPLIANCE/CSRC")
-LAWS_SUBDIR = "laws"
-WRITS_SUBDIR = "writs"
-RELATIONS_SUBDIR = "relations"
-SOURCES_SUBDIR = "sources"
-CATALOG_SUBDIR = "catalog"
+RAW_SUBDIR = "raw"
+WORK_SUBDIR = "work"
+CANONICAL_SUBDIR = "canonical"
+REPORTS_SUBDIR = "reports"
 
 # 接近真人：每次请求间隔（秒）
 DELAY_MIN = 1.8

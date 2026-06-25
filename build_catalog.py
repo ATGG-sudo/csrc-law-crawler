@@ -16,6 +16,7 @@ from typing import Any
 from config import OUTPUT_DIR
 from storage import (
     amac_sources_dir,
+    attachment_index_path,
     catalog_dir,
     catalog_laws_dir,
     catalog_relations_path,
@@ -23,11 +24,12 @@ from storage import (
     load_json,
     save_json,
     source_matches_path,
+    reports_dir,
     utc_now_iso,
 )
 
-CATALOG_MANIFEST = OUTPUT_DIR / "catalog" / "manifest.json"
-CATALOG_REVIEW_QUEUE = OUTPUT_DIR / "catalog" / "review_queue.json"
+CATALOG_MANIFEST = catalog_dir() / "manifest.json"
+CATALOG_REVIEW_QUEUE = reports_dir() / "review_queue.json"
 QUOTED_TITLE_RE = re.compile(r"《([^》]{4,120})》")
 PUBLISHING_TITLE_RE = re.compile(r"^(?:关于)?(?:发布|印发|公布|修订并发布)")
 SPACE_PUNCT_RE = re.compile(r"[\s\u3000·•,，。；;:：()（）\[\]【】《》“”\"'、—\-]+")
@@ -78,6 +80,7 @@ def _neris_records() -> list[dict[str, Any]]:
         doc = load_json(path, {})
         metadata = doc.get("metadata") or {}
         record_id = str(metadata.get("id") or path.stem.removeprefix("reg_"))
+        attachment_index = load_json(attachment_index_path(record_id), {})
         records.append(
             {
                 "system": "neris",
@@ -86,7 +89,11 @@ def _neris_records() -> list[dict[str, Any]]:
                 "plain_text": doc.get("full_text") or "",
                 "local_file": str(path.relative_to(OUTPUT_DIR)),
                 "page_url": (doc.get("source") or {}).get("detail_url"),
-                "assets": doc.get("source_attachments") or [],
+                "assets": (
+                    attachment_index.get("attachments")
+                    or doc.get("source_attachments")
+                    or []
+                ),
             }
         )
     return records
@@ -411,8 +418,12 @@ def build_catalog(*, clean: bool = True) -> dict[str, Any]:
         save_json(catalog_laws_dir() / f"{entity_id}.json", entity)
 
     matches_doc = {
-        "schema_version": 1,
+        "schema_version": 2,
         "updated_at": utc_now_iso(),
+        "by_source": {
+            f"{system}:{record_id}": entity_id
+            for (system, record_id), entity_id in sorted(source_to_entity.items())
+        },
         "items": matches,
     }
     save_json(source_matches_path(), matches_doc)

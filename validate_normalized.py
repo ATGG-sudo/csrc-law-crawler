@@ -123,7 +123,9 @@ def validate_normalized(*, sample: int = 5) -> tuple[list[str], dict[str, Any]]:
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="校验 normalized/laws 和 assets 结果")
+    parser = argparse.ArgumentParser(
+        description="校验 work/normalized_neris/laws 和资产结果"
+    )
     parser.add_argument("--sample", type=int, default=5, help="每类问题最多展示 N 个样本")
     args = parser.parse_args()
 

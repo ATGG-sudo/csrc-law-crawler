@@ -29,6 +29,7 @@ from storage import (
     related_laws_path,
     reg_file_path,
     revisions_path,
+    writs_dir,
     writ_file_path,
 )
 from writ_crawl import writ_has_body
@@ -111,10 +112,14 @@ def _simulate_pass2_family(
 def validate_pass2(client: HumanLikeClient, sample_size: int) -> list[str]:
     issues: list[str] = []
     cp = load_checkpoint()
-    done = list(cp.get("pass2", {}).get("completed_ids") or [])
+    pass_state = cp.get("pass2", {})
+    done = list(pass_state.get("completed_ids") or [])
     if not done:
         return ["Pass 2 尚无 completed_ids，跳过"]
 
+    rev_doc = load_json(revisions_path(), {})
+    by_law_id = rev_doc.get("by_law_id") or {}
+    families = rev_doc.get("families") or {}
     picks = done if len(done) <= sample_size else random.sample(done, sample_size)
     print(f"\n=== Pass 2 抽样 {len(picks)} / {len(done)} 已完成 ===")
 
@@ -129,26 +134,37 @@ def validate_pass2(client: HumanLikeClient, sample_size: int) -> list[str]:
             print(f"  FAIL {name}: 无 reg 文件")
             continue
 
-        data = load_json(path, {})
-        ref = data.get("revision_ref")
-        # revision_ref 仅在 pass2 全部结束后写入；运行中可能为空
-        if ref:
-            fk = ref.get("family_id")
-            rev_doc = load_json(revisions_path(), {})
-            fam = (rev_doc.get("families") or {}).get(str(fk))
+        family_id = by_law_id.get(str(law_id))
+        if family_id:
+            fam = families.get(str(family_id))
             if not fam:
-                issues.append(f"[pass2] {law_id} revision_ref={fk} 但 revisions.json 无此族")
-                print(f"  FAIL {name}: revision_ref 无对应 family")
+                issues.append(
+                    f"[pass2] {law_id} family_id={family_id} 但 revisions.json 无此族"
+                )
+                print(f"  FAIL {name}: by_law_id 无对应 family")
             elif str(law_id) not in {str(v.get("id")) for v in fam.get("versions", [])}:
-                issues.append(f"[pass2] {law_id} 不在 family {fk} 的 versions 中")
+                issues.append(
+                    f"[pass2] {law_id} 不在 family {family_id} 的 versions 中"
+                )
                 print(f"  FAIL {name}: 不在 versions 列表")
             else:
-                print(f"  OK   {name}: family={fk}, evlt={len(exp['evlt_ids'])}, related={exp['related_count']}")
+                print(
+                    f"  OK   {name}: family={family_id}, "
+                    f"evlt={len(exp['evlt_ids'])}, related={exp['related_count']}"
+                )
         else:
-            print(
-                f"  PEND {name}: revision_ref 未写（pass2 未完成或未落盘）; "
-                f"API evlt={len(exp['evlt_ids'])}, related={exp['related_count']}"
+            message = (
+                f"{name}: revisions.json 的 by_law_id 缺少 {law_id}; "
+                f"pass2 status={pass_state.get('status') or 'unknown'}"
             )
+            if pass_state.get("status") == "complete":
+                issues.append(f"[pass2] {message}")
+                print(f"  FAIL {message}")
+            else:
+                print(
+                    f"  PEND {message}; API evlt={len(exp['evlt_ids'])}, "
+                    f"related={exp['related_count']}"
+                )
 
         if exp["evlt_ids"]:
             missing_local = [
@@ -157,7 +173,7 @@ def validate_pass2(client: HumanLikeClient, sample_size: int) -> list[str]:
             if missing_local:
                 print(
                     f"       提示: evltList 中 {len(missing_local)}/{len(exp['evlt_ids'])} "
-                    f"版本尚未下载到 laws/"
+                    f"版本尚未下载到 raw/neris/laws/"
                 )
 
     # 多版本族专项：找有 evlt 的样本验证 supersedes 方向
@@ -179,7 +195,6 @@ def validate_pass2(client: HumanLikeClient, sample_size: int) -> list[str]:
                 v0, v1 = vers[0].get("version"), vers[1].get("version")
                 print(f"       family {fk}: 新版 {v0} supersedes 旧版 {v1}（按 version 数字降序）")
 
-    rev_doc = load_json(revisions_path(), {})
     n_fam = len(rev_doc.get("families") or {})
     if len(done) > 10 and n_fam < len(done) // 10:
         issues.append(
@@ -280,7 +295,7 @@ def validate_pass4(client: HumanLikeClient, sample_size: int) -> list[str]:
     done = list(cp.get("pass4", {}).get("completed_writ_ids") or [])
     print(f"\n=== Pass 4 本地 writ 文件校验（checkpoint 完成 {len(done)}）===")
 
-    writ_files = list(Path(OUTPUT_DIR / "writs").glob("writ_*.json"))
+    writ_files = list(writs_dir().glob("writ_*.json"))
     no_body = []
     no_basis = []
     for wf in writ_files:

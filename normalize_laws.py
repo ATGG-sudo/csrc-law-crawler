@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Normalize raw law JSON into search-friendly derived documents.
 
-The raw files under laws/ are treated as immutable source material.  This
-script writes derived JSON to normalized/laws/ and leaves the originals alone.
+The raw files under raw/neris/laws/ are immutable source material. This
+script writes intermediate JSON to work/normalized_neris/laws/.
 """
 
 from __future__ import annotations
@@ -19,7 +19,14 @@ from urllib.parse import urljoin, urlparse
 from bs4 import BeautifulSoup, NavigableString, Tag
 
 from config import BASE_URL, OUTPUT_DIR
-from storage import laws_dir, load_json, save_json, utc_now_iso
+from storage import (
+    attachment_index_path,
+    laws_dir,
+    load_json,
+    save_json,
+    utc_now_iso,
+    work_dir,
+)
 
 NORMALIZED_SUBDIR = "normalized"
 ASSETS_SUBDIR = "assets"
@@ -76,11 +83,11 @@ ANGLE_RE = re.compile(r"<([^<>]+)>")
 
 
 def normalized_laws_dir() -> Path:
-    return OUTPUT_DIR / NORMALIZED_SUBDIR / "laws"
+    return work_dir() / "normalized_neris" / "laws"
 
 
 def normalized_manifest_path() -> Path:
-    return OUTPUT_DIR / NORMALIZED_SUBDIR / "manifest.json"
+    return work_dir() / "normalized_neris" / "manifest.json"
 
 
 def _protect_non_html_angles(raw: str) -> str:
@@ -384,6 +391,12 @@ def build_normalized_law(path: Path) -> dict[str, Any]:
     source_file = str(path.relative_to(OUTPUT_DIR))
     detail_url = ((source.get("source") or {}).get("detail_url") or "")
     normalizer = LawNormalizer(law_id, source_file, detail_url)
+    attachment_index = load_json(attachment_index_path(law_id), {})
+    source_attachments = (
+        attachment_index.get("attachments")
+        or source.get("source_attachments")
+        or []
+    )
 
     body_ago = normalizer.normalize_fragment(
         metadata.get("body_ago") or "",
@@ -397,7 +410,7 @@ def build_normalized_law(path: Path) -> dict[str, Any]:
     )
 
     source_attachment_state: dict[str, dict[str, Any]] = {}
-    for attachment in source.get("source_attachments") or []:
+    for attachment in source_attachments:
         source_url = attachment.get("source_url")
         if not source_url:
             continue
@@ -485,7 +498,12 @@ def build_normalized_law(path: Path) -> dict[str, Any]:
     assets = normalizer.assets()
     prior_normalized = load_json(normalized_laws_dir() / path.name, {})
     prior_asset_manifest = load_json(
-        OUTPUT_DIR / ASSETS_SUBDIR / "laws" / law_id / "asset_manifest.json",
+        OUTPUT_DIR
+        / "raw"
+        / ASSETS_SUBDIR
+        / "embedded"
+        / law_id
+        / "asset_manifest.json",
         {},
     )
     prior_assets = {

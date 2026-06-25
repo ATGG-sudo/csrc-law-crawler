@@ -3,21 +3,21 @@
 from __future__ import annotations
 
 import json
+import os
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
 from config import (
-    CATALOG_SUBDIR,
-    LAWS_SUBDIR,
+    CANONICAL_SUBDIR,
     OUTPUT_DIR,
-    SOURCES_SUBDIR,
-    WRITS_SUBDIR,
+    RAW_SUBDIR,
+    REPORTS_SUBDIR,
+    WORK_SUBDIR,
 )
 
 CHECKPOINT_NAME = "checkpoint.json"
 MANIFEST_NAME = "manifest.json"
-RELATIONS_SUBDIR = "relations"
 REVISIONS_NAME = "revisions.json"
 RELATED_LAWS_NAME = "related_laws.json"
 CASES_NAME = "cases.json"
@@ -31,28 +31,44 @@ def utc_now_iso() -> str:
     return datetime.now(tz=timezone.utc).isoformat()
 
 
+def raw_dir() -> Path:
+    return OUTPUT_DIR / RAW_SUBDIR
+
+
+def work_dir() -> Path:
+    return OUTPUT_DIR / WORK_SUBDIR
+
+
+def canonical_dir() -> Path:
+    return OUTPUT_DIR / CANONICAL_SUBDIR
+
+
+def reports_dir() -> Path:
+    return OUTPUT_DIR / REPORTS_SUBDIR
+
+
 def laws_dir() -> Path:
-    return OUTPUT_DIR / LAWS_SUBDIR
+    return raw_dir() / "neris" / "laws"
 
 
 def writs_dir() -> Path:
-    return OUTPUT_DIR / WRITS_SUBDIR
+    return raw_dir() / "neris" / "writs"
 
 
 def relations_dir() -> Path:
-    return OUTPUT_DIR / RELATIONS_SUBDIR
+    return work_dir() / "relations"
 
 
 def sources_dir() -> Path:
-    return OUTPUT_DIR / SOURCES_SUBDIR
+    return raw_dir()
 
 
 def amac_sources_dir() -> Path:
-    return sources_dir() / "amac"
+    return raw_dir() / "amac" / "records"
 
 
 def catalog_dir() -> Path:
-    return OUTPUT_DIR / CATALOG_SUBDIR
+    return work_dir() / "catalog"
 
 
 def catalog_laws_dir() -> Path:
@@ -60,19 +76,19 @@ def catalog_laws_dir() -> Path:
 
 
 def catalog_normalized_dir() -> Path:
-    return catalog_dir() / "normalized" / "laws"
+    return canonical_dir() / "json"
 
 
 def catalog_markdown_dir() -> Path:
-    return catalog_dir() / "markdown" / "laws"
+    return canonical_dir() / "markdown"
 
 
 def checkpoint_path() -> Path:
-    return OUTPUT_DIR / CHECKPOINT_NAME
+    return work_dir() / "checkpoints" / CHECKPOINT_NAME
 
 
 def manifest_path() -> Path:
-    return OUTPUT_DIR / MANIFEST_NAME
+    return raw_dir() / "neris" / MANIFEST_NAME
 
 
 def revisions_path() -> Path:
@@ -88,11 +104,11 @@ def cases_path() -> Path:
 
 
 def coverage_gaps_path() -> Path:
-    return relations_dir() / COVERAGE_GAPS_NAME
+    return reports_dir() / COVERAGE_GAPS_NAME
 
 
 def source_matches_path() -> Path:
-    return relations_dir() / SOURCE_MATCHES_NAME
+    return canonical_dir() / "indexes" / "source_map.json"
 
 
 def catalog_relations_path() -> Path:
@@ -100,11 +116,19 @@ def catalog_relations_path() -> Path:
 
 
 def revision_evidence_cache_dir() -> Path:
-    return relations_dir() / REVISION_EVIDENCE_CACHE_SUBDIR
+    return raw_dir() / "neris" / "revision_evidence"
 
 
 def revision_evidence_cache_path(law_id: str) -> Path:
     return revision_evidence_cache_dir() / f"{law_id}.json"
+
+
+def attachment_index_dir() -> Path:
+    return raw_dir() / "neris" / "attachment_index"
+
+
+def attachment_index_path(law_id: str) -> Path:
+    return attachment_index_dir() / f"{law_id}.json"
 
 
 def reg_file_path(law_id: str) -> Path:
@@ -160,25 +184,38 @@ def load_reg_metadata(law_id: str) -> dict[str, Any] | None:
     return data.get("metadata") or None
 
 
-def patch_reg_revision_ref(law_id: str, family_key: str) -> None:
-    path = reg_file_path(law_id)
-    if not path.exists():
-        return
-    data = load_json(path, {})
-    data["revision_ref"] = {
-        "family_id": family_key,
-        "relations_file": f"{RELATIONS_SUBDIR}/{REVISIONS_NAME}",
-    }
-    save_json(path, data)
-
-
-def clear_reg_revision_refs() -> int:
-    changed = 0
-    for path in sorted(laws_dir().glob("reg_*.json")):
-        data = load_json(path, {})
-        if "revision_ref" not in data:
-            continue
-        data.pop("revision_ref", None)
-        save_json(path, data)
-        changed += 1
-    return changed
+def publish_json_bundle(documents: dict[Path, Any]) -> None:
+    """Atomically publish a set of JSON files, rolling back on replacement errors."""
+    staged: dict[Path, Path] = {}
+    backups: dict[Path, Path] = {}
+    try:
+        for target, data in documents.items():
+            target.parent.mkdir(parents=True, exist_ok=True)
+            staged_path = target.with_suffix(target.suffix + ".staged")
+            save_json(staged_path, data)
+            staged[target] = staged_path
+        for target in documents:
+            backup = target.with_suffix(target.suffix + ".publish-backup")
+            if backup.exists():
+                backup.unlink()
+            if target.exists():
+                os.replace(target, backup)
+                backups[target] = backup
+            os.replace(staged[target], target)
+    except BaseException:
+        for target in documents:
+            if target.exists() and target not in backups:
+                target.unlink()
+            backup = backups.get(target)
+            if backup and backup.exists():
+                if target.exists():
+                    target.unlink()
+                os.replace(backup, target)
+        raise
+    finally:
+        for path in staged.values():
+            if path.exists():
+                path.unlink()
+        for path in backups.values():
+            if path.exists():
+                path.unlink()

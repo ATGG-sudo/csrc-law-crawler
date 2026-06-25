@@ -8,7 +8,9 @@ import sys
 
 from amac_crawl import crawl_amac
 from build_catalog import build_catalog
+from build_canonical_relations import build_canonical_relations
 from client import HumanLikeClient
+from config import DELAY_MAX, DELAY_MIN
 from coverage_gaps import detect_coverage_gaps
 from download_assets import rebuild_asset_manifests
 from export_markdown_catalog import export_catalog_markdown
@@ -34,20 +36,35 @@ def main() -> int:
     parser.add_argument("--discover-only", action="store_true")
     parser.add_argument("--skip-neris-attachments", action="store_true")
     parser.add_argument("--skip-revision-rebuild", action="store_true")
-    parser.add_argument("--delay-min", type=float, default=0.15)
-    parser.add_argument("--delay-max", type=float, default=0.35)
+    parser.add_argument("--delay-min", type=float, default=DELAY_MIN)
+    parser.add_argument("--delay-max", type=float, default=DELAY_MAX)
+    parser.add_argument(
+        "--workers",
+        type=int,
+        default=1,
+        help="NERIS并发数；默认1，提速需显式指定",
+    )
     args = parser.parse_args()
 
     phases = args.phase or ["all"]
     if "all" in phases:
         phases = ["p0", "p1", "p2"]
+    if (
+        "p0" in phases
+        and args.law_limit is not None
+        and not args.skip_revision_rebuild
+    ):
+        parser.error(
+            "--law-limit 不能用于正式修订关系重建；"
+            "请同时指定 --skip-revision-rebuild，或使用独立测试输出目录"
+        )
 
     try:
         if "p0" in phases:
             if not args.skip_revision_rebuild:
                 evidence_result = prefetch(
                     limit=args.law_limit,
-                    workers=2,
+                    workers=args.workers,
                     delay_min=args.delay_min,
                     delay_max=args.delay_max,
                 )
@@ -58,12 +75,10 @@ def main() -> int:
                 client = HumanLikeClient(
                     delay_min=args.delay_min,
                     delay_max=args.delay_max,
-                    batch_size=0,
                 )
                 run_pass2(
                     client,
                     limit=args.law_limit,
-                    patch_revision_ref=True,
                     rebuild=True,
                     fetch_related=False,
                     refresh_revision_cache=False,
@@ -74,7 +89,7 @@ def main() -> int:
                     download=not args.discover_only,
                     delay_min=args.delay_min,
                     delay_max=args.delay_max,
-                    workers=2,
+                    workers=args.workers,
                 )
             normalize_laws(limit=args.law_limit, force=True)
             rebuild_asset_manifests()
@@ -100,6 +115,7 @@ def main() -> int:
                 force=True,
                 clean=True,
             )
+            build_canonical_relations()
             issues, _summary = validate_catalog_exports()
             if issues:
                 raise RuntimeError(

@@ -16,15 +16,17 @@ from typing import Any
 from config import OUTPUT_DIR
 from normalize_laws import normalized_laws_dir
 from storage import (
+    canonical_dir,
     catalog_dir,
     catalog_laws_dir,
     catalog_normalized_dir,
     load_json,
+    revisions_path,
     save_json,
     utc_now_iso,
 )
 
-CATALOG_NORMALIZED_MANIFEST = catalog_dir() / "normalized" / "manifest.json"
+CATALOG_NORMALIZED_MANIFEST = catalog_dir() / "normalized_manifest.json"
 PAGE_NUMBER_RE = re.compile(r"^\s*\d{1,3}\s*$")
 CHAPTER_RE = re.compile(
     r"^第[一二三四五六七八九十百千万零〇两\d]+[章节编]\s*"
@@ -148,7 +150,50 @@ def _merge_assets(
     return list(result.values())
 
 
-def normalize_catalog_entity(path: Path) -> dict[str, Any]:
+HISTORICAL_STATUSES = {
+    "已失效",
+    "失效",
+    "已废止",
+    "废止",
+    "已被修改",
+    "被修改",
+}
+REFERENCE_TYPES = {
+    "publication_notice",
+    "regulatory_practice",
+    "supporting_material",
+}
+
+
+def effectiveness_for(entity: dict[str, Any]) -> dict[str, Any]:
+    raw_status = str(entity.get("status") or "unknown")
+    document_type = str(entity.get("document_type") or "")
+    if raw_status in HISTORICAL_STATUSES:
+        status = "historical"
+        confidence = 1.0
+    elif raw_status == "现行有效":
+        status = "current"
+        confidence = 1.0
+    elif document_type in REFERENCE_TYPES:
+        status = "not_applicable"
+        confidence = 0.95
+    else:
+        status = "unknown"
+        confidence = 0.5
+    return {
+        "status": status,
+        "raw_status": raw_status,
+        "source": (entity.get("preferred_content") or {}).get("source_system"),
+        "confidence": confidence,
+        "as_of": utc_now_iso()[:10],
+    }
+
+
+def normalize_catalog_entity(
+    path: Path,
+    *,
+    revision_by_law_id: dict[str, str] | None = None,
+) -> dict[str, Any]:
     entity = load_json(path, {})
     entity_id = str(entity.get("id") or path.stem)
     title = str(entity.get("title") or entity_id)
@@ -181,12 +226,28 @@ def normalize_catalog_entity(path: Path) -> dict[str, Any]:
             markdown = str(neris.get("full_text_markdown") or "")
             tables = neris.get("tables") or []
             inherited_assets = neris.get("assets") or []
-            revision_ref = neris.get("revision_ref")
             normalization_method = "neris_normalized_reuse"
 
     if not markdown:
         markdown = plain_text_to_markdown(plain_text, title=title)
     content_status = "full_text" if plain_text.strip() else "metadata_only"
+    revision_by_law_id = revision_by_law_id or {}
+    neris_source_id = next(
+        (
+            str(source.get("record_id"))
+            for source in (entity.get("sources") or [])
+            if source.get("system") == "neris" and source.get("record_id")
+        ),
+        None,
+    )
+    if neris_source_id and neris_source_id in revision_by_law_id:
+        revision_ref = {
+            "family_id": revision_by_law_id[neris_source_id],
+            "relations_file": str(
+                (canonical_dir() / "relations" / "graph.json").relative_to(OUTPUT_DIR)
+            ),
+        }
+    effectiveness = effectiveness_for(entity)
 
     return {
         "schema_version": 1,
@@ -198,6 +259,7 @@ def normalize_catalog_entity(path: Path) -> dict[str, Any]:
         "title": title,
         "document_type": metadata.get("document_type"),
         "status": metadata.get("status"),
+        "effectiveness": effectiveness,
         "metadata": metadata,
         "preferred_source": {
             "system": preferred_system,
@@ -231,13 +293,19 @@ def normalize_catalog(
     empty_content = 0
     method_counts: dict[str, int] = defaultdict(int)
     items: list[dict[str, Any]] = []
+    revision_by_law_id = (
+        load_json(revisions_path(), {}).get("by_law_id") or {}
+    )
     for index, path in enumerate(source_files, start=1):
         out_path = out_dir / path.name
         if out_path.exists() and not force:
             doc = load_json(out_path, {})
             skipped += 1
         else:
-            doc = normalize_catalog_entity(path)
+            doc = normalize_catalog_entity(
+                path,
+                revision_by_law_id=revision_by_law_id,
+            )
             save_json(out_path, doc)
             written += 1
         if not str(doc.get("full_text_plain") or "").strip():
@@ -248,6 +316,7 @@ def normalize_catalog(
                 "id": doc.get("id"),
                 "title": doc.get("title"),
                 "status": doc.get("status"),
+                "effectiveness": (doc.get("effectiveness") or {}).get("status"),
                 "source_system": (doc.get("preferred_source") or {}).get("system"),
                 "source_file": str(path.relative_to(OUTPUT_DIR)),
                 "file": str(out_path.relative_to(OUTPUT_DIR)),

@@ -21,6 +21,10 @@ from config import (
 )
 
 
+class RetryableContentError(RuntimeError):
+    """A syntactically successful response whose content is unusable."""
+
+
 class HumanLikeClient:
     def __init__(
         self,
@@ -131,13 +135,21 @@ class HumanLikeClient:
                 response.raise_for_status()
                 data = response.content
                 if not data:
-                    raise RuntimeError("empty attachment response")
+                    raise RetryableContentError("empty attachment response")
                 content_type = (
                     response.headers.get("Content-Type") or ""
                 ).split(";")[0].strip().lower()
+                prefix = data[:500].lstrip().lower()
+                if content_type == "text/html" and (
+                    prefix.startswith(b"<!doctype html")
+                    or prefix.startswith(b"<html")
+                ):
+                    raise RetryableContentError(
+                        "attachment endpoint returned an HTML error page"
+                    )
                 return data, content_type
 
-            except requests.RequestException as exc:
+            except (requests.RequestException, RetryableContentError) as exc:
                 last_error = exc
                 wait = RETRY_BACKOFF_BASE * attempt + random.uniform(1, 4)
                 print(f"  [错误 {exc!r}，{wait:.1f}s 后重试 {attempt}/{MAX_RETRIES}]")

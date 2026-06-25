@@ -6,6 +6,7 @@ from typing import Any
 
 from api import fetch_count_law_writ, paginate_relative_examples, summarize_writ
 from client import HumanLikeClient
+from config import OUTPUT_DIR
 from storage import (
     cases_path,
     iter_reg_law_ids,
@@ -15,13 +16,18 @@ from storage import (
     save_checkpoint,
     save_json,
     utc_now_iso,
+    writ_file_path,
 )
 
 
 def _normalize_case(row: dict[str, Any]) -> dict[str, Any]:
     writ = summarize_writ(row)
     writ_id = writ.get("id")
-    local_file = f"writs/writ_{writ_id}.json" if writ_id else None
+    local_file = (
+        str(writ_file_path(str(writ_id)).relative_to(OUTPUT_DIR))
+        if writ_id
+        else None
+    )
     return {
         "law_writ_id": writ_id,
         "name": writ["name"],

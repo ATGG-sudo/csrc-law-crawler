@@ -12,13 +12,13 @@ from revisions_graph import (
     normalize_version_node,
 )
 from storage import (
-    clear_reg_revision_refs,
     iter_reg_law_ids,
     load_checkpoint,
     load_reg_metadata,
     load_json,
-    patch_reg_revision_ref,
+    publish_json_bundle,
     related_laws_path,
+    reports_dir,
     revision_evidence_cache_path,
     revisions_path,
     save_checkpoint,
@@ -29,8 +29,8 @@ from storage import (
 
 def _normalize_related_item(item: dict[str, Any]) -> dict[str, Any]:
     to_id = (
-        item.get("secFutrsLawId")
-        or item.get("putAndLawId")
+        item.get("putAndLawId")
+        or item.get("secFutrsLawId")
         or item.get("lawId")
         or item.get("id")
     )
@@ -71,18 +71,24 @@ def run_pass2(
     client: HumanLikeClient,
     *,
     limit: int | None = None,
-    patch_revision_ref: bool = True,
     rebuild: bool = False,
     fetch_related: bool = True,
     refresh_revision_cache: bool = False,
-) -> None:
+) -> dict[str, Any]:
+    if rebuild and limit is not None:
+        raise ValueError(
+            "--rebuild-relations 不能与 --limit 同时使用；"
+            "全量关系图禁止被局部结果覆盖"
+        )
     checkpoint = load_checkpoint()
     pass_state = checkpoint.setdefault("pass2", {"completed_ids": [], "failures": []})
     if rebuild:
         pass_state["completed_ids"] = []
         pass_state["failures"] = []
         pass_state.pop("finished_at", None)
-        print(f"  已清理旧 revision_ref: {clear_reg_revision_refs()} 个")
+    pass_state["status"] = "in_progress"
+    pass_state["started_at"] = utc_now_iso()
+    save_checkpoint(checkpoint)
     done: set[str] = set(pass_state.get("completed_ids") or [])
 
     law_ids = iter_reg_law_ids(limit=limit)
@@ -102,6 +108,7 @@ def run_pass2(
             "检测到旧版或缺失的 revisions.json；请使用 --rebuild-relations 重建"
         )
 
+    run_failures: list[dict[str, Any]] = []
     for idx, law_id in enumerate(law_ids, start=1):
         if law_id in done:
             continue
@@ -175,28 +182,61 @@ def run_pass2(
 
         except Exception as exc:
             print(f"  !! 失败: {exc}")
-            pass_state.setdefault("failures", []).append(
-                {"id": law_id, "error": str(exc), "at": utc_now_iso()}
-            )
+            failure = {"id": law_id, "error": str(exc), "at": utc_now_iso()}
+            run_failures.append(failure)
+            pass_state.setdefault("failures", []).append(failure)
             save_checkpoint(checkpoint)
+
+    if run_failures:
+        pass_state["status"] = "incomplete"
+        pass_state.pop("finished_at", None)
+        save_checkpoint(checkpoint)
+        failure_doc = {
+            "schema_version": 1,
+            "updated_at": utc_now_iso(),
+            "status": "incomplete",
+            "rebuild": rebuild,
+            "requested_laws": total,
+            "completed_laws": len(done & set(law_ids)),
+            "failures": run_failures,
+        }
+        save_json(reports_dir() / "pass2_failures.json", failure_doc)
+        raise RuntimeError(
+            f"Pass 2 有 {len(run_failures)} 条失败；正式关系图保持不变"
+        )
 
     revisions_doc = build_revisions_document(
         version_records,
         uf,
         evidence_records=evidence_records,
     )
-    save_json(revisions_path(), revisions_doc)
-    save_json(
-        related_laws_path(),
-        {"updated_at": utc_now_iso(), "items": related_items},
+    missing_current = sorted(set(law_ids) - set(revisions_doc.get("by_law_id") or {}))
+    if missing_current:
+        pass_state["status"] = "incomplete"
+        pass_state.pop("finished_at", None)
+        save_checkpoint(checkpoint)
+        raise RuntimeError(
+            f"Pass 2 关系图缺少 {len(missing_current)} 个当前法规节点；"
+            "正式关系图保持不变"
+        )
+    related_doc = {"updated_at": utc_now_iso(), "items": related_items}
+    publish_json_bundle(
+        {
+            revisions_path(): revisions_doc,
+            related_laws_path(): related_doc,
+        }
     )
 
-    if patch_revision_ref:
-        for law_id, family_key in revisions_doc.get("by_law_id", {}).items():
-            patch_reg_revision_ref(law_id, family_key)
-
     pass_state["finished_at"] = utc_now_iso()
+    pass_state["status"] = "complete"
+    pass_state["failures"] = []
     save_checkpoint(checkpoint)
     print(f"  修订族: {len(revisions_doc.get('families', {}))} 个")
     print(f"  关联法规条目: {len(related_items)} 条法规有数据")
     print(f"  输出: {revisions_path()} , {related_laws_path()}")
+    return {
+        "status": "complete",
+        "laws": total,
+        "families": len(revisions_doc.get("families", {})),
+        "related_laws": len(related_items),
+    }

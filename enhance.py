@@ -25,11 +25,6 @@ def main() -> int:
     )
     parser.add_argument("--limit", type=int, default=None, help="仅处理前 N 条法规 (pass2/3)")
     parser.add_argument(
-        "--no-patch-revision-ref",
-        action="store_true",
-        help="pass2 不回写 reg_*.json 的 revision_ref",
-    )
-    parser.add_argument(
         "--rebuild-relations",
         action="store_true",
         help="pass2 丢弃旧修订关系并从官网重新拉取",
@@ -94,7 +89,6 @@ def main() -> int:
         run_pass2(
             client,
             limit=args.limit,
-            patch_revision_ref=not args.no_patch_revision_ref,
             rebuild=args.rebuild_relations,
             fetch_related=not args.skip_related_laws,
             refresh_revision_cache=args.refresh_revision_cache,

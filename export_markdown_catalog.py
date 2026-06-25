@@ -29,20 +29,33 @@ from storage import (
 )
 
 CATALOG_MARKDOWN_CURRENT_DIR = catalog_markdown_dir() / "current"
-CATALOG_MARKDOWN_OTHER_DIR = catalog_markdown_dir() / "other"
-CATALOG_MARKDOWN_MANIFEST = catalog_dir() / "markdown" / "manifest.json"
+CATALOG_MARKDOWN_UNKNOWN_DIR = catalog_markdown_dir() / "unknown"
+CATALOG_MARKDOWN_HISTORICAL_DIR = catalog_markdown_dir() / "historical"
+CATALOG_MARKDOWN_REFERENCE_DIR = catalog_markdown_dir() / "reference"
+CATALOG_MARKDOWN_MANIFEST = catalog_dir() / "markdown_manifest.json"
+
+
+def bucket_for_document(doc: dict[str, Any]) -> str:
+    effectiveness = (doc.get("effectiveness") or {}).get("status")
+    return {
+        "current": "current",
+        "historical": "historical",
+        "not_applicable": "reference",
+    }.get(str(effectiveness), "unknown")
 
 
 def _target_path(
-    metadata: dict[str, Any],
+    doc: dict[str, Any],
     entity_id: str,
     used_paths: set[Path],
 ) -> Path:
-    target_dir = (
-        CATALOG_MARKDOWN_CURRENT_DIR
-        if metadata.get("status") == "现行有效"
-        else CATALOG_MARKDOWN_OTHER_DIR
-    )
+    metadata = doc.get("metadata") or {}
+    target_dir = {
+        "current": CATALOG_MARKDOWN_CURRENT_DIR,
+        "unknown": CATALOG_MARKDOWN_UNKNOWN_DIR,
+        "historical": CATALOG_MARKDOWN_HISTORICAL_DIR,
+        "reference": CATALOG_MARKDOWN_REFERENCE_DIR,
+    }[bucket_for_document(doc)]
     stem = _filename_stem(metadata, entity_id)
     candidate = target_dir / f"{stem}.md"
     if candidate not in used_paths:
@@ -66,6 +79,7 @@ def _front_matter(doc: dict[str, Any]) -> str:
         "title": doc.get("title"),
         "document_type": doc.get("document_type"),
         "status": doc.get("status"),
+        "effectiveness": (doc.get("effectiveness") or {}).get("status"),
         "fileno": metadata.get("fileno"),
         "pub_org": metadata.get("pub_org"),
         "pub_date": metadata.get("pub_date"),
@@ -94,6 +108,7 @@ def _metadata_table(doc: dict[str, Any]) -> str:
         ("发布日期", metadata.get("pub_date")),
         ("施行日期", metadata.get("effective_date")),
         ("效力状态", doc.get("status")),
+        ("归一化效力", (doc.get("effectiveness") or {}).get("status")),
         ("首选来源", (doc.get("preferred_source") or {}).get("system")),
     ]
     lines = ["| 字段 | 值 |", "| --- | --- |"]
@@ -178,33 +193,32 @@ def export_catalog_markdown(
         normalized_files = normalized_files[:limit]
     if not normalized_files:
         raise FileNotFoundError(
-            "catalog/normalized/laws 不存在，请先运行 python normalize_catalog.py"
+            "canonical/json 不存在，请先运行 python normalize_catalog.py"
         )
     if clean and catalog_markdown_dir().exists():
         shutil.rmtree(catalog_markdown_dir())
     CATALOG_MARKDOWN_CURRENT_DIR.mkdir(parents=True, exist_ok=True)
-    CATALOG_MARKDOWN_OTHER_DIR.mkdir(parents=True, exist_ok=True)
+    CATALOG_MARKDOWN_UNKNOWN_DIR.mkdir(parents=True, exist_ok=True)
+    CATALOG_MARKDOWN_HISTORICAL_DIR.mkdir(parents=True, exist_ok=True)
+    CATALOG_MARKDOWN_REFERENCE_DIR.mkdir(parents=True, exist_ok=True)
 
     used_paths: set[Path] = set()
     items: list[dict[str, Any]] = []
     written = 0
     skipped = 0
-    current_count = 0
-    other_count = 0
+    bucket_counts = {
+        "current": 0,
+        "unknown": 0,
+        "historical": 0,
+        "reference": 0,
+    }
     for index, path in enumerate(normalized_files, start=1):
         doc = load_json(path, {})
         entity_id = str(doc.get("id") or path.stem)
         metadata = doc.get("metadata") or {}
-        out_path = _target_path(metadata, entity_id, used_paths)
-        bucket = (
-            "current"
-            if out_path.parent == CATALOG_MARKDOWN_CURRENT_DIR
-            else "other"
-        )
-        if bucket == "current":
-            current_count += 1
-        else:
-            other_count += 1
+        out_path = _target_path(doc, entity_id, used_paths)
+        bucket = bucket_for_document(doc)
+        bucket_counts[bucket] += 1
         if out_path.exists() and not force:
             skipped += 1
         else:
@@ -233,8 +247,7 @@ def export_catalog_markdown(
         "source_dir": str(catalog_normalized_dir().relative_to(OUTPUT_DIR)),
         "markdown_dir": str(catalog_markdown_dir().relative_to(OUTPUT_DIR)),
         "count": len(items),
-        "current_count": current_count,
-        "other_count": other_count,
+        "bucket_counts": bucket_counts,
         "written": written,
         "skipped": skipped,
         "filename_pattern": "title - fileno - effective_date.md",
@@ -263,8 +276,8 @@ def main() -> int:
         return 1
     print(
         f"完成: count={manifest['count']} written={manifest['written']} "
-        f"skipped={manifest['skipped']} current={manifest['current_count']} "
-        f"other={manifest['other_count']} -> {CATALOG_MARKDOWN_MANIFEST}"
+        f"skipped={manifest['skipped']} buckets={manifest['bucket_counts']} "
+        f"-> {CATALOG_MARKDOWN_MANIFEST}"
     )
     return 0
 

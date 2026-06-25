@@ -9,13 +9,17 @@ from pathlib import Path
 from typing import Any
 
 from config import OUTPUT_DIR
+from build_canonical_relations import CANONICAL_GRAPH
 from export_markdown_catalog import CATALOG_MARKDOWN_MANIFEST
 from normalize_catalog import CATALOG_NORMALIZED_MANIFEST
 from storage import (
+    canonical_dir,
     catalog_laws_dir,
     catalog_markdown_dir,
     catalog_normalized_dir,
     load_json,
+    save_json,
+    utc_now_iso,
 )
 
 
@@ -44,7 +48,7 @@ def validate_catalog_exports() -> tuple[list[str], dict[str, Any]]:
 
     if catalog_ids != normalized_ids:
         issues.append(
-            "catalog/normalized ID coverage mismatch: "
+            "canonical/json ID coverage mismatch: "
             f"missing={len(catalog_ids - normalized_ids)} "
             f"extra={len(normalized_ids - catalog_ids)}"
         )
@@ -78,20 +82,48 @@ def validate_catalog_exports() -> tuple[list[str], dict[str, Any]]:
         if not path.exists():
             issues.append(f"missing Markdown file: {relative}")
 
+    graph = load_json(CANONICAL_GRAPH, {})
+    graph_nodes = {
+        str(node.get("id"))
+        for node in (graph.get("nodes") or [])
+        if node.get("id")
+    }
+    for index, edge in enumerate(graph.get("edges") or []):
+        if str(edge.get("from")) not in graph_nodes:
+            issues.append(f"canonical graph edge[{index}]: missing from node")
+        if str(edge.get("to")) not in graph_nodes:
+            issues.append(f"canonical graph edge[{index}]: missing to node")
+    if not graph_nodes:
+        issues.append("canonical relation graph missing or empty")
+
     summary = {
         "catalog_laws": len(catalog_files),
         "normalized_laws": len(normalized_files),
         "markdown_files": len(markdown_files),
         "normalized_empty_content": empty_content,
         "metadata_only": metadata_only,
-        "current_markdown": len(
-            list((catalog_markdown_dir() / "current").glob("*.md"))
-        ),
-        "other_markdown": len(
-            list((catalog_markdown_dir() / "other").glob("*.md"))
-        ),
+        "bucket_counts": {
+            bucket: len(list((catalog_markdown_dir() / bucket).glob("*.md")))
+            for bucket in ("current", "unknown", "historical", "reference")
+        },
         "issues": len(issues),
+        "relation_nodes": len(graph_nodes),
+        "relation_edges": len(graph.get("edges") or []),
     }
+    if not issues:
+        save_json(
+            canonical_dir() / "manifest.json",
+            {
+                "schema_version": 1,
+                "updated_at": utc_now_iso(),
+                "json_count": len(normalized_files),
+                "markdown_count": len(markdown_files),
+                "metadata_only": metadata_only,
+                "bucket_counts": summary["bucket_counts"],
+                "relations_file": "canonical/relations/graph.json",
+                "source_map_file": "canonical/indexes/source_map.json",
+            },
+        )
     return issues, summary
 
 

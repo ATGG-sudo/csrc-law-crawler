@@ -3,9 +3,9 @@
 from __future__ import annotations
 
 import hashlib
-from pathlib import Path
 from typing import Any
 
+from config import OUTPUT_DIR
 from storage import reg_file_path, utc_now_iso
 
 
@@ -53,7 +53,7 @@ def normalize_version_node(
     label = raw.get("evltDescrib") or name
     local_file: str | None = None
     if law_id and reg_file_path(str(law_id)).exists():
-        local_file = str(Path("laws") / f"reg_{law_id}.json")
+        local_file = str(reg_file_path(str(law_id)).relative_to(OUTPUT_DIR))
     return {
         "id": law_id,
         "csrc_number": number,

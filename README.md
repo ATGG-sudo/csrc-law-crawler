@@ -81,9 +81,9 @@ python validate_normalized.py --sample 5
 
 ```text
 OUTPUT_DIR/
-├── laws/                  # NERIS 原始法规 JSON
-├── normalized/laws/       # 清洗后的法规 JSON
-└── markdown/laws/         # 可直接阅读或导入 RAG 的 Markdown
+├── raw/neris/laws/        # NERIS 来源层法规
+├── work/normalized_neris/ # NERIS 中间清洗 JSON
+└── work/markdown_neris/   # NERIS 中间 Markdown
 ```
 
 ## 使用方式
@@ -97,7 +97,7 @@ OUTPUT_DIR/
 python crawl.py --types regulation
 
 # 2. 预取官方修订证据，支持中断后继续
-python prefetch_revision_evidence.py --workers 2
+python prefetch_revision_evidence.py --workers 1
 
 # 3. 从官方证据重建修订关系和关联法规
 python enhance.py --pass 2 --rebuild-relations
@@ -109,7 +109,7 @@ python enhance.py --pass 3
 python enhance.py --pass 4
 
 # 6. 下载 NERIS 独立附件
-python neris_attachments.py --workers 2
+python neris_attachments.py --workers 1
 ```
 
 如果确实需要官网全部执法文书，而不只是案例索引引用的文书：
@@ -136,14 +136,17 @@ python validate_normalized.py --sample 10
 python export_markdown_laws.py --force --clean
 ```
 
-推荐的数据入口：
+这一方案生成的是 NERIS 中间层，便于单源检查。需要唯一正式消费入口时，继续执行“方案三”的 P2。
 
-- RAG / 全文检索：`normalized/laws/* -> full_text_plain`
-- 保留表格的检索：`normalized/laws/* -> full_text_markdown`
-- 人工阅读或 Markdown 索引：`markdown/laws/current/`
-- 原始数据追溯：`laws/reg_*.json`
+正式统一目录的数据入口：
 
-原始 `laws/` 不会被清洗脚本覆盖。
+- RAG / 全文检索：`canonical/json/* -> full_text_plain`
+- 保留表格的检索：`canonical/json/* -> full_text_markdown`
+- 人工阅读：`canonical/markdown/{current,unknown,historical,reference}/`
+- 唯一正式关系图：`canonical/relations/graph.json`
+- 原始数据追溯：`raw/neris/laws/`、`raw/amac/records/`
+
+`raw/` 不写入修订引用等派生字段；附件扫描状态独立存放。
 
 ### 方案三：构建 NERIS + AMAC 统一法规目录
 
@@ -170,15 +173,19 @@ python repair.py --phase p1 --delay-min 1.8 --delay-max 3.6
 python repair.py --phase p2
 ```
 
-统一目录结果：
+正式输出：
 
 ```text
-OUTPUT_DIR/catalog/
-├── laws/                  # 来源无关的统一法规实体
-├── normalized/laws/       # 统一目录清洗结果
-├── markdown/laws/         # 统一目录 Markdown
-├── manifest.json
-└── review_queue.json      # 歧义匹配或效力状态待复核项
+OUTPUT_DIR/canonical/
+├── json/                  # 唯一 normalized JSON
+├── markdown/
+│   ├── current/           # 明确现行有效
+│   ├── unknown/           # 官网未明确效力
+│   ├── historical/        # 失效、废止、被修改
+│   └── reference/         # 动态、说明、模板、辅助材料
+├── relations/graph.json   # 唯一正式关系图
+├── indexes/source_map.json
+└── manifest.json
 ```
 
 ## 常用命令
@@ -203,6 +210,7 @@ OUTPUT_DIR/catalog/
 ```bash
 python crawl.py --help
 python enhance.py --help
+python amac_crawl.py --help
 python repair.py --help
 ```
 
@@ -239,21 +247,21 @@ python validate_catalog_exports.py
 
    默认单请求间隔为 1.8–3.6 秒，每 40 次请求额外暂停 8–15 秒。全量任务耗时较长是正常现象。不要并行启动多个全量实例。
 
-2. 不要组合 `--rebuild-relations` 和 `--limit`
+2. 修订关系采用事务式发布
 
-   `--rebuild-relations` 会清理旧修订引用并覆盖 `relations/revisions.json`。如果同时限制为前 N 条，只会留下局部关系图。`repair.py --phase p0 --law-limit N` 具有同样风险，应仅在独立测试输出目录使用。
+   `--rebuild-relations` 与 `--limit` 的组合会被直接拒绝。任务中存在任一失败时，旧正式图保持不变，checkpoint 标记为 `incomplete`。
 
 3. 谨慎使用 `--clean`
 
-   `normalize_catalog.py --clean`、`export_markdown_catalog.py --clean` 和 `export_markdown_laws.py --clean` 会清空对应派生目录后重建。它们不会删除原始 `laws/`，但不应与其他写入任务并行运行。
+   `normalize_catalog.py --clean` 和 `export_markdown_catalog.py --clean` 会清空对应 canonical 派生目录后重建。它们不会删除 `raw/`，但不应与其他写入任务并行运行。
 
-4. 限量资产下载会生成限量清单
+4. 限量资产下载不会覆盖全局清单
 
-   `download_assets.py --limit-laws` 或 `--limit-assets` 会使用本轮扫描结果重写全局资产 manifest。调试时建议使用独立输出目录，完成后再运行一次不带 limit 的命令。
+   `download_assets.py --limit-laws` 或 `--limit-assets` 的结果写入 `work/runs/`；只有全量扫描可以更新 `reports/assets_manifest.json`。
 
 5. 附件失败不一定是本地错误
 
-   部分 NERIS 附件接口会返回 HTTP 200 但正文为空；相关项会记录为失败并进入缺口清单。
+   HTTP 200 空附件和 HTML 错误页会进入重试；达到上限后才记录为源站内容失败。
 
 6. 数据不是法律意见
 
@@ -263,76 +271,75 @@ python validate_catalog_exports.py
 
 ```text
 OUTPUT_DIR/
-├── laws/
-│   └── reg_{secFutrsLawId}.json
-├── writs/
-│   └── writ_{lawWritId}.json
-├── relations/
-│   ├── revisions.json
-│   ├── revision_evidence_cache/
-│   ├── related_laws.json
-│   ├── cases.json
-│   ├── coverage_gaps.json
-│   ├── source_matches.json
-│   └── catalog_relations.json
-├── sources/
+├── raw/
+│   ├── neris/
+│   │   ├── laws/
+│   │   ├── writs/
+│   │   ├── attachment_index/
+│   │   ├── revision_evidence/
+│   │   └── manifest.json
 │   ├── amac/
-│   └── amac_manifest.json
-├── normalized/
-│   ├── laws/
+│   │   ├── records/
+│   │   └── manifest.json
+│   └── assets/
+│       ├── embedded/
+│       ├── neris_attachments/
+│       └── amac/
+├── canonical/
+│   ├── json/
+│   ├── markdown/{current,unknown,historical,reference}/
+│   ├── relations/graph.json
+│   ├── indexes/source_map.json
 │   └── manifest.json
-├── assets/
-│   ├── laws/
-│   ├── neris_attachments/
-│   ├── amac/
-│   ├── assets_manifest.json
-│   └── assets_failures.json
-├── markdown/
-│   ├── laws/current/
-│   ├── laws/other/
-│   └── manifest.json
-├── catalog/
-│   ├── laws/
-│   ├── normalized/laws/
-│   ├── markdown/laws/
-│   ├── manifest.json
-│   └── review_queue.json
-├── checkpoint.json
-└── manifest.json
+├── work/
+│   ├── catalog/
+│   ├── normalized_neris/
+│   ├── relations/
+│   ├── checkpoints/
+│   └── runs/
+└── reports/
+    ├── coverage_gaps.json
+    ├── assets_manifest.json
+    ├── assets_failures.json
+    └── review_queue.json
 ```
 
 ## 数据模型
 
 ### 法规
 
-`laws/reg_{id}.json` 保存：
+`raw/neris/laws/reg_{id}.json` 保存：
 
 - `metadata`：名称、文号、发布单位、发布日期、生效日期、效力状态等。
 - `entries`：章节、条文和子项。
 - `full_text`：按法规结构拼接的原始全文。
 - `source`：列表摘要、详情页 URL 和抓取时间。
-- `source_attachments`：NERIS 独立附件。
-- `revision_ref`：指向法规修订族。
+- 原始法规中不写入 `revision_ref` 或附件扫描运行状态。
+- 独立附件查询结果位于 `raw/neris/attachment_index/{id}.json`。
 
 ### 执法文书
 
-`writs/writ_{id}.json` 保存：
+`raw/neris/writs/writ_{id}.json` 保存：
 
 - `metadata`：文书名、发文机关、日期、类型和原文链接。
 - `body`：文书正文。
 - `legal_basis`：引用法规及条文。
 - `parties`：当事人、角色、违法类型和处罚金额。
 
-### 修订与案例关系
+### 正式关系图
 
-- `relations/revisions.json`：官方修订族、版本节点和 `supersedes` 边。
-- `relations/related_laws.json`：NERIS 返回的关联法规。
-- `relations/cases.json`：法规级和条文级案例，以及需要抓取的文书 ID。
-- `relations/catalog_relations.json`：统一目录中的发布、附件等跨实体关系。
+`canonical/relations/graph.json` 合并：
+
+- `supersedes`：官方修订关系。
+- `related_to`：NERIS 关联法规。
+- `cited_by_case`：法规/条文到执法文书。
+- `publishes`：公告到正式附件文件。
+
+组件级关系只存在于 `work/relations/`，不作为正式消费入口。
 
 ### 清洗法规
 
-`normalized/laws/reg_{id}.json` 主要增加：
+`canonical/json/law_{canonical_id}.json` 主要包含：
 
 - `full_text_plain`：去除 HTML 后的检索文本。
 - `full_text_markdown`：保留表格和资产占位的 Markdown。
@@ -352,11 +359,11 @@ OUTPUT_DIR/
 | AMAC 页面及附件来源记录 | 664 |
 | 统一法规实体 | 3852 |
 | 统一目录 Markdown | 3852 |
-| 修订族 | 3311 |
-| 有官方证据的修订边 | 1086 |
-| 关联法规边 | 946 |
+| Markdown：current / unknown / historical / reference | 3427 / 140 / 49 / 236 |
+| 正式关系图节点 / 边 | 5749 / 4994 |
+| `supersedes` / `related_to` / `cited_by_case` / `publishes` | 1086 / 777 / 2989 / 142 |
 
-默认 Pass 4 只抓取 `relations/cases.json` 引用的文书，因此本地文书数通常少于官网文书总数。
+默认 Pass 4 只抓取 `work/relations/cases.json` 引用的文书，因此本地文书数通常少于官网文书总数。
 
 ## 代码入口
 
@@ -376,12 +383,14 @@ OUTPUT_DIR/
 | [normalize_catalog.py](normalize_catalog.py) | 统一目录内容清洗 |
 | [export_markdown_laws.py](export_markdown_laws.py) | NERIS 法规 Markdown 导出 |
 | [export_markdown_catalog.py](export_markdown_catalog.py) | 统一目录 Markdown 导出 |
+| [build_canonical_relations.py](build_canonical_relations.py) | 合并唯一正式关系图 |
+| [migrate_strict_layout.py](migrate_strict_layout.py) | 严格目录迁移和旧派生清理 |
 | [coverage_gaps.py](coverage_gaps.py) | 正文、附件和系列覆盖缺口检测 |
 
 ## 已知限制
 
-- NERIS 原始正文包含源站 HTML；检索和 RAG 应优先使用 normalized 层。
+- NERIS 来源正文包含源站 HTML；检索和 RAG 应使用 `canonical/`。
 - 修订方向根据官方修订组内的版本号顺序推导；版本号缺失或相同不会生成方向边。
-- 自动来源匹配主要依据规范化标题、文号和发布日期，歧义项会进入 `catalog/review_queue.json`。
+- 自动来源匹配主要依据规范化标题、文号和发布日期，歧义项会进入 `reports/review_queue.json`。
 - PDF、DOCX 等附件的自动抽取受文件格式、扫描质量和源站文件完整性影响。
-- `manifest.json` 主要覆盖基础法规；执法文书范围以 `relations/cases.json` 和 `writs/` 为准。
+- 正式消费入口仅为 `canonical/`；`work/` 内容可以随时由 `raw/` 重建。

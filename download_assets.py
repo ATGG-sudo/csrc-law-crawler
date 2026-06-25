@@ -29,11 +29,12 @@ from config import (
 )
 from normalize_laws import normalized_laws_dir
 from storage import load_json, save_json, utc_now_iso
+from storage import raw_dir, reports_dir, work_dir
 
-ASSETS_ROOT = OUTPUT_DIR / "assets"
-LAW_ASSETS_ROOT = ASSETS_ROOT / "laws"
-ASSETS_MANIFEST = ASSETS_ROOT / "assets_manifest.json"
-ASSET_FAILURES = ASSETS_ROOT / "assets_failures.json"
+ASSETS_ROOT = raw_dir() / "assets"
+LAW_ASSETS_ROOT = ASSETS_ROOT / "embedded"
+ASSETS_MANIFEST = reports_dir() / "assets_manifest.json"
+ASSET_FAILURES = reports_dir() / "assets_failures.json"
 
 CONTENT_TYPE_EXTENSIONS = {
     "application/msword": ".doc",
@@ -168,6 +169,7 @@ def download_assets(
     limit_assets: int | None = None,
     force: bool = False,
 ) -> dict[str, Any]:
+    partial_scope = limit_laws is not None or limit_assets is not None
     law_files = sorted(normalized_laws_dir().glob("reg_*.json"))
     if limit_laws is not None:
         law_files = law_files[:limit_laws]
@@ -270,7 +272,9 @@ def download_assets(
             break
 
     manifest = {
+        "schema_version": 1,
         "updated_at": utc_now_iso(),
+        "scope": "partial" if partial_scope else "full",
         "normalized_dir": str(normalized_laws_dir().relative_to(OUTPUT_DIR)),
         "assets_root": str(ASSETS_ROOT.relative_to(OUTPUT_DIR)),
         "seen_assets": seen_assets,
@@ -279,15 +283,22 @@ def download_assets(
         "failed": failed,
         "items": manifest_items,
     }
-    save_json(ASSETS_MANIFEST, manifest)
-    save_json(
-        ASSET_FAILURES,
-        {
-            "updated_at": utc_now_iso(),
-            "failed": failed,
-            "items": failures,
-        },
-    )
+    failure_doc = {
+        "schema_version": 1,
+        "updated_at": utc_now_iso(),
+        "scope": manifest["scope"],
+        "failed": failed,
+        "items": failures,
+    }
+    if partial_scope:
+        stamp = utc_now_iso().replace(":", "").replace("+", "_")
+        run_dir = work_dir() / "runs" / f"assets_{stamp}"
+        save_json(run_dir / "manifest.json", manifest)
+        save_json(run_dir / "failures.json", failure_doc)
+        manifest["output"] = str(run_dir.relative_to(OUTPUT_DIR))
+    else:
+        save_json(ASSETS_MANIFEST, manifest)
+        save_json(ASSET_FAILURES, failure_doc)
     return manifest
 
 
@@ -338,7 +349,9 @@ def rebuild_asset_manifests() -> dict[str, Any]:
         save_json(LAW_ASSETS_ROOT / law_id / "asset_manifest.json", law_manifest)
 
     manifest = {
+        "schema_version": 1,
         "updated_at": utc_now_iso(),
+        "scope": "full",
         "normalized_dir": str(normalized_laws_dir().relative_to(OUTPUT_DIR)),
         "assets_root": str(ASSETS_ROOT.relative_to(OUTPUT_DIR)),
         "seen_assets": seen_assets,
@@ -392,7 +405,8 @@ def main() -> int:
     print(
         "完成: "
         f"seen={manifest['seen_assets']} downloaded={manifest['downloaded']} "
-        f"skipped={manifest['skipped']} failed={manifest['failed']} -> {ASSETS_MANIFEST}"
+        f"skipped={manifest['skipped']} failed={manifest['failed']} -> "
+        f"{manifest.get('output') or ASSETS_MANIFEST}"
     )
     return 0
 

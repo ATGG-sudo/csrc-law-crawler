@@ -1,10 +1,17 @@
 from __future__ import annotations
 
+import tempfile
 import unittest
+from pathlib import Path
+from unittest.mock import patch
 
 from build_catalog import choose_neris_match, normalize_title
+from client import HumanLikeClient
+from export_markdown_catalog import bucket_for_document
 from normalize_catalog import plain_text_to_markdown
+from pass2_relations import run_pass2
 from revisions_graph import UnionFind, build_revisions_document
+from storage import load_json, save_json
 
 
 class RevisionGraphTests(unittest.TestCase):
@@ -115,6 +122,97 @@ class CatalogNormalizationTests(unittest.TestCase):
             title="某规则",
         )
         self.assertIn("第一条 内容。", markdown)
+
+
+class SafetyTests(unittest.TestCase):
+    def test_rebuild_relations_rejects_limit(self) -> None:
+        with self.assertRaisesRegex(ValueError, "不能与 --limit"):
+            run_pass2(None, limit=1, rebuild=True)  # type: ignore[arg-type]
+
+    def test_empty_binary_response_is_retried(self) -> None:
+        class Response:
+            def __init__(self, content: bytes) -> None:
+                self.content = content
+                self.headers = {"Content-Type": "application/pdf"}
+                self.status_code = 200
+                self.text = ""
+
+            def raise_for_status(self) -> None:
+                return None
+
+        class Session:
+            def __init__(self) -> None:
+                self.responses = [Response(b""), Response(b"%PDF-data")]
+                self.calls = 0
+
+            def get(self, *_args, **_kwargs):
+                response = self.responses[self.calls]
+                self.calls += 1
+                return response
+
+        client = HumanLikeClient(
+            delay_min=0,
+            delay_max=0,
+            batch_size=0,
+        )
+        session = Session()
+        client.session = session  # type: ignore[assignment]
+        with patch("client.time.sleep", return_value=None):
+            data, _content_type = client.get_binary("https://example.invalid/file")
+        self.assertEqual(b"%PDF-data", data)
+        self.assertEqual(2, session.calls)
+
+    def test_unknown_rule_and_reference_are_separate_buckets(self) -> None:
+        self.assertEqual(
+            "unknown",
+            bucket_for_document({"effectiveness": {"status": "unknown"}}),
+        )
+        self.assertEqual(
+            "reference",
+            bucket_for_document(
+                {"effectiveness": {"status": "not_applicable"}}
+            ),
+        )
+
+    def test_pass2_failure_keeps_published_graph_unchanged(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            revisions = root / "revisions.json"
+            related = root / "related_laws.json"
+            save_json(revisions, {"schema_version": 2, "sentinel": "old"})
+            save_json(related, {"items": {"sentinel": []}})
+
+            with (
+                patch("pass2_relations.load_checkpoint", return_value={}),
+                patch("pass2_relations.save_checkpoint", return_value=None),
+                patch("pass2_relations.iter_reg_law_ids", return_value=["a"]),
+                patch(
+                    "pass2_relations.load_reg_metadata",
+                    return_value={"id": "a", "name": "规则甲"},
+                ),
+                patch(
+                    "pass2_relations.revision_evidence_cache_path",
+                    return_value=root / "missing-cache.json",
+                ),
+                patch(
+                    "pass2_relations.fetch_change_law",
+                    side_effect=RuntimeError("network failed"),
+                ),
+                patch("pass2_relations.revisions_path", return_value=revisions),
+                patch("pass2_relations.related_laws_path", return_value=related),
+                patch("pass2_relations.reports_dir", return_value=root / "reports"),
+            ):
+                with self.assertRaisesRegex(RuntimeError, "正式关系图保持不变"):
+                    run_pass2(
+                        HumanLikeClient(delay_min=0, delay_max=0),
+                        rebuild=True,
+                        fetch_related=False,
+                    )
+
+            self.assertEqual(
+                {"schema_version": 2, "sentinel": "old"},
+                load_json(revisions, {}),
+            )
 
 
 if __name__ == "__main__":

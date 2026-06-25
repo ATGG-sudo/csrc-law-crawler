@@ -12,9 +12,9 @@ from typing import Any
 
 from config import OUTPUT_DIR
 from normalize_laws import normalized_laws_dir
-from storage import load_json, save_json, utc_now_iso
+from storage import load_json, save_json, utc_now_iso, work_dir
 
-MARKDOWN_ROOT = OUTPUT_DIR / "markdown"
+MARKDOWN_ROOT = work_dir() / "markdown_neris"
 MARKDOWN_LAWS_DIR = MARKDOWN_ROOT / "laws"
 MARKDOWN_CURRENT_DIR = MARKDOWN_LAWS_DIR / "current"
 MARKDOWN_OTHER_DIR = MARKDOWN_LAWS_DIR / "other"
@@ -238,7 +238,9 @@ def export_markdown(
     clean: bool = False,
 ) -> dict[str, Any]:
     if not normalized_laws_dir().exists():
-        raise FileNotFoundError("normalized/laws 不存在，请先运行 python normalize_laws.py")
+        raise FileNotFoundError(
+            "work/normalized_neris/laws 不存在，请先运行 python normalize_laws.py"
+        )
 
     if clean and MARKDOWN_LAWS_DIR.exists():
         shutil.rmtree(MARKDOWN_LAWS_DIR)
@@ -305,10 +307,16 @@ def export_markdown(
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="将 normalized/laws 导出为 Markdown")
+    parser = argparse.ArgumentParser(
+        description="将 work/normalized_neris/laws 导出为中间 Markdown"
+    )
     parser.add_argument("--limit", type=int, default=None, help="仅导出前 N 个法规")
     parser.add_argument("--force", action="store_true", help="覆盖已有 Markdown 文件")
-    parser.add_argument("--clean", action="store_true", help="导出前清空 markdown/laws")
+    parser.add_argument(
+        "--clean",
+        action="store_true",
+        help="导出前清空 work/markdown_neris/laws",
+    )
     args = parser.parse_args()
 
     try:

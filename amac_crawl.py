@@ -20,7 +20,13 @@ import urllib3
 from bs4 import BeautifulSoup, Tag
 
 from config import AMAC_BASE_URL, AMAC_RULES_BASE_URL, OUTPUT_DIR, USER_AGENT
-from storage import amac_sources_dir, load_json, save_json, utc_now_iso
+from storage import (
+    amac_sources_dir,
+    load_json,
+    raw_dir,
+    save_json,
+    utc_now_iso,
+)
 
 POLICY_SEARCH_URL = urljoin(
     AMAC_BASE_URL,
@@ -30,8 +36,8 @@ SITE_SEARCH_URL = urljoin(
     AMAC_BASE_URL,
     "portal/ESSearch/doc/findDocsByKeyword",
 )
-AMAC_ASSETS_ROOT = OUTPUT_DIR / "assets" / "amac"
-AMAC_MANIFEST = OUTPUT_DIR / "sources" / "amac_manifest.json"
+AMAC_ASSETS_ROOT = raw_dir() / "assets" / "amac"
+AMAC_MANIFEST = raw_dir() / "amac" / "manifest.json"
 
 DEFAULT_SITE_KEYWORDS = [
     "私募基金登记备案动态",

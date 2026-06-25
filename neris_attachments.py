@@ -15,9 +15,17 @@ from urllib.parse import urlparse
 from api import fetch_local_files, local_file_download_url
 from client import HumanLikeClient
 from config import OUTPUT_DIR
-from storage import iter_reg_law_ids, load_json, reg_file_path, save_json, utc_now_iso
+from storage import (
+    attachment_index_path,
+    iter_reg_law_ids,
+    load_json,
+    raw_dir,
+    reg_file_path,
+    save_json,
+    utc_now_iso,
+)
 
-ATTACHMENTS_ROOT = OUTPUT_DIR / "assets" / "neris_attachments"
+ATTACHMENTS_ROOT = raw_dir() / "assets" / "neris_attachments"
 
 
 def normalize_attachment(raw: dict[str, Any]) -> dict[str, Any]:
@@ -104,9 +112,15 @@ def update_law_attachments(
 ) -> list[dict[str, Any]]:
     path = reg_file_path(law_id)
     doc = load_json(path, {})
+    index_path = attachment_index_path(law_id)
+    index_doc = load_json(index_path, {})
     existing_by_id = {
         str(item.get("attachment_id")): item
-        for item in (doc.get("source_attachments") or [])
+        for item in (
+            index_doc.get("attachments")
+            or doc.get("source_attachments")
+            or []
+        )
         if item.get("attachment_id")
     }
     discovered = discover_attachments(client, law_id)
@@ -125,9 +139,15 @@ def update_law_attachments(
         elif local_ok:
             item["download_status"] = "ok"
         merged.append(item)
-    doc["source_attachments"] = merged
-    doc.setdefault("source", {})["attachments_checked_at"] = utc_now_iso()
-    save_json(path, doc)
+    save_json(
+        index_path,
+        {
+            "schema_version": 1,
+            "law_id": law_id,
+            "checked_at": utc_now_iso(),
+            "attachments": merged,
+        },
+    )
     return merged
 
 

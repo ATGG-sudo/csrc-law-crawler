@@ -11,6 +11,7 @@ from typing import Any
 
 from normalize_laws import normalized_laws_dir
 from storage import (
+    attachment_index_path,
     coverage_gaps_path,
     laws_dir,
     load_json,
@@ -57,7 +58,13 @@ def detect_coverage_gaps(*, limit: int | None = None) -> dict[str, Any]:
         law_id = str(metadata.get("id") or path.stem.removeprefix("reg_"))
         name = str(metadata.get("name") or law_id)
         full_text = str(doc.get("full_text") or "")
-        source_attachments = doc.get("source_attachments")
+        attachment_index = load_json(attachment_index_path(law_id), {})
+        if attachment_index:
+            source_attachments = attachment_index.get("attachments") or []
+            attachments_checked = True
+        else:
+            source_attachments = doc.get("source_attachments")
+            attachments_checked = source_attachments is not None
         quoted_titles = [
             title.strip()
             for title in QUOTED_TITLE_RE.findall(name)
@@ -66,7 +73,7 @@ def detect_coverage_gaps(*, limit: int | None = None) -> dict[str, Any]:
 
         is_announcement = any(word in name for word in ANNOUNCEMENT_WORDS)
         if is_announcement and quoted_titles and len(full_text) < 2000:
-            if source_attachments is None:
+            if not attachments_checked:
                 findings.append(
                     _finding(
                         law_id,
