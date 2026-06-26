@@ -21,7 +21,7 @@ from build_catalog import (
 )
 from client import HumanLikeClient
 from export_markdown_catalog import bucket_for_document
-from normalize_catalog import effectiveness_for, plain_text_to_markdown
+from normalize_catalog import _merge_assets, effectiveness_for, plain_text_to_markdown
 from pass2_relations import run_pass2
 from revisions_graph import UnionFind, build_revisions_document
 from storage import load_json, save_json
@@ -237,6 +237,59 @@ class CatalogNormalizationTests(unittest.TestCase):
         self.assertEqual("law_formal", relations[0]["from"])
         self.assertEqual("law_trial", relations[0]["to"])
         self.assertEqual("supersedes", relations[0]["relation"])
+
+    def test_duplicate_assets_merge_by_sha256_with_source_evidence(self) -> None:
+        assets = _merge_assets(
+            [],
+            [
+                {
+                    "asset_id": "asset_a",
+                    "kind": "source_document",
+                    "label": "规则.pdf",
+                    "source_url": "https://example.test/a.pdf",
+                    "local_file": "raw/assets/a.pdf",
+                    "sha256": "same",
+                    "source_system": "amac",
+                    "source_record_id": "a",
+                    "source_role": "official_text",
+                },
+                {
+                    "asset_id": "asset_b",
+                    "kind": "source_document",
+                    "label": "规则.pdf",
+                    "source_url": "https://example.test/b.pdf",
+                    "local_file": "raw/assets/b.pdf",
+                    "sha256": "same",
+                    "source_system": "amac",
+                    "source_record_id": "b",
+                    "source_role": "official_copy",
+                },
+            ],
+        )
+        self.assertEqual(1, len(assets))
+        self.assertEqual(
+            ["https://example.test/a.pdf", "https://example.test/b.pdf"],
+            assets[0]["source_urls"],
+        )
+        self.assertEqual(["raw/assets/a.pdf", "raw/assets/b.pdf"], assets[0]["local_files"])
+        self.assertEqual(
+            {"a", "b"},
+            {record["source_record_id"] for record in assets[0]["source_records"]},
+        )
+
+    def test_legacy_asset_merge_does_not_create_empty_source_record(self) -> None:
+        assets = _merge_assets(
+            [
+                {
+                    "asset_id": "legacy_asset",
+                    "kind": "attachment",
+                    "sha256": "legacy",
+                }
+            ],
+            [],
+        )
+        self.assertEqual(1, len(assets))
+        self.assertEqual([], assets[0]["source_records"])
 
 
 class AmacDiscoveryTests(unittest.TestCase):

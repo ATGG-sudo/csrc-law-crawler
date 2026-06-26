@@ -116,6 +116,7 @@ def _source_assets(entity: dict[str, Any]) -> list[dict[str, Any]]:
             f"{source.get('system')}:{source.get('record_id')}:{key}".encode("utf-8")
         ).hexdigest()[:20]
         local_path = OUTPUT_DIR / local_file if local_file else None
+        sha256 = _sha256_file(local_path) if local_path and local_path.exists() else None
         assets.append(
             {
                 "asset_id": f"catalog_source_{digest}",
@@ -123,6 +124,7 @@ def _source_assets(entity: dict[str, Any]) -> list[dict[str, Any]]:
                 "label": Path(local_file).name or entity.get("title") or "来源文件",
                 "source_url": page_url or None,
                 "local_file": local_file or None,
+                "sha256": sha256,
                 "download_status": (
                     "ok" if local_path and local_path.exists() else "source_only"
                 ),
@@ -134,20 +136,82 @@ def _source_assets(entity: dict[str, Any]) -> list[dict[str, Any]]:
     return assets
 
 
+def _sha256_file(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as f:
+        for chunk in iter(lambda: f.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _asset_source_record(asset: dict[str, Any]) -> dict[str, Any] | None:
+    record = {
+        "source_system": asset.get("source_system"),
+        "source_record_id": asset.get("source_record_id"),
+        "source_role": asset.get("source_role"),
+        "source_url": asset.get("source_url"),
+        "local_file": asset.get("local_file"),
+    }
+    return record if any(record.values()) else None
+
+
+def _append_unique(target: list[Any], value: Any) -> None:
+    if value is None or value == "" or value == [] or value == {}:
+        return
+    if value not in target:
+        target.append(value)
+
+
+def _merge_asset_into(existing: dict[str, Any], incoming: dict[str, Any]) -> None:
+    for field in ("source_url", "local_file"):
+        if not existing.get(field) and incoming.get(field):
+            existing[field] = incoming[field]
+    for field in ("source_urls", "local_files", "source_records"):
+        existing.setdefault(field, [])
+
+    for value in incoming.get("source_urls") or []:
+        _append_unique(existing["source_urls"], value)
+    _append_unique(existing["source_urls"], incoming.get("source_url"))
+
+    for value in incoming.get("local_files") or []:
+        _append_unique(existing["local_files"], value)
+    _append_unique(existing["local_files"], incoming.get("local_file"))
+
+    for record in incoming.get("source_records") or []:
+        _append_unique(existing["source_records"], record)
+    _append_unique(existing["source_records"], _asset_source_record(incoming))
+
+
 def _merge_assets(
     inherited: list[dict[str, Any]],
     source_assets: list[dict[str, Any]],
 ) -> list[dict[str, Any]]:
     result: dict[str, dict[str, Any]] = {}
     for asset in [*inherited, *source_assets]:
-        key = str(
-            asset.get("local_file")
-            or asset.get("source_url")
-            or asset.get("asset_id")
-            or ""
+        sha256 = str(asset.get("sha256") or "")
+        key = (
+            f"sha256:{sha256}"
+            if sha256
+            else str(
+                asset.get("local_file")
+                or asset.get("source_url")
+                or asset.get("asset_id")
+                or ""
+            )
         )
-        if key and key not in result:
-            result[key] = asset
+        if not key:
+            continue
+        if key not in result:
+            merged = dict(asset)
+            merged["source_urls"] = list(asset.get("source_urls") or [])
+            _append_unique(merged["source_urls"], asset.get("source_url"))
+            merged["local_files"] = list(asset.get("local_files") or [])
+            _append_unique(merged["local_files"], asset.get("local_file"))
+            merged["source_records"] = list(asset.get("source_records") or [])
+            _append_unique(merged["source_records"], _asset_source_record(asset))
+            result[key] = merged
+        else:
+            _merge_asset_into(result[key], asset)
     return list(result.values())
 
 

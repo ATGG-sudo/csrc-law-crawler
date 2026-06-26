@@ -346,7 +346,7 @@ OUTPUT_DIR/
 - `full_text_plain`：去除 HTML 后的检索文本。
 - `full_text_markdown`：保留表格和资产占位的 Markdown。
 - `tables`：结构化表格及 Markdown 表格。
-- `assets`：图片、附件 URL、本地路径、哈希和下载状态。
+- `assets`：图片、附件 URL、本地路径、哈希和下载状态；canonical 层按 `sha256` 合并重复资产，并通过 `source_urls`、`local_files`、`source_records` 保留多来源证据。
 
 ## 当前数据快照
 
