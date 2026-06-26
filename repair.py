@@ -6,7 +6,7 @@ from __future__ import annotations
 import argparse
 import sys
 
-from amac_crawl import crawl_amac
+from amac_crawl import DEFAULT_XWFB_PAGES, crawl_amac
 from build_catalog import build_catalog
 from build_canonical_relations import build_canonical_relations
 from client import HumanLikeClient
@@ -33,6 +33,7 @@ def main() -> int:
     parser.add_argument("--law-limit", type=int, default=None)
     parser.add_argument("--policy-limit", type=int, default=None)
     parser.add_argument("--site-limit", type=int, default=None)
+    parser.add_argument("--xwfb-pages", type=int, default=DEFAULT_XWFB_PAGES)
     parser.add_argument("--discover-only", action="store_true")
     parser.add_argument("--skip-neris-attachments", action="store_true")
     parser.add_argument("--skip-revision-rebuild", action="store_true")
@@ -99,6 +100,7 @@ def main() -> int:
             crawl_amac(
                 policy_limit=args.policy_limit,
                 site_limit=args.site_limit,
+                xwfb_pages=args.xwfb_pages,
                 download_assets=not args.discover_only,
                 force=False,
                 delay_min=args.delay_min,

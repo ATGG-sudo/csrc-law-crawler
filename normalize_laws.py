@@ -19,6 +19,7 @@ from urllib.parse import urljoin, urlparse
 from bs4 import BeautifulSoup, NavigableString, Tag
 
 from config import BASE_URL, OUTPUT_DIR
+from parser import repair_known_neris_mojibake
 from storage import (
     attachment_index_path,
     laws_dir,
@@ -107,6 +108,7 @@ def _soup_fragment(raw: str) -> BeautifulSoup:
 
 
 def _clean_text(text: str) -> str:
+    text = repair_known_neris_mojibake(text)
     text = text.replace("\r\n", "\n").replace("\r", "\n").replace("\xa0", " ")
     lines = [re.sub(r"[ \t\f\v]+", " ", line).strip() for line in text.split("\n")]
     text = "\n".join(line for line in lines if line)
@@ -114,6 +116,7 @@ def _clean_text(text: str) -> str:
 
 
 def _clean_markdown(text: str) -> str:
+    text = repair_known_neris_mojibake(text)
     text = text.replace("\r\n", "\n").replace("\r", "\n").replace("\xa0", " ")
     text = re.sub(r"[ \t\f\v]+\n", "\n", text)
     text = re.sub(r"\n{3,}", "\n\n", text)
@@ -265,6 +268,7 @@ class LawNormalizer:
         item_id: str | None = None,
         context: str = "",
     ) -> dict[str, Any]:
+        raw = repair_known_neris_mojibake(raw or "")
         soup = _soup_fragment(raw or "")
         fragment_tables: list[str] = []
         fragment_assets: list[str] = []
@@ -387,6 +391,10 @@ def _entry_context(entry: dict[str, Any]) -> str:
 def build_normalized_law(path: Path) -> dict[str, Any]:
     source = load_json(path, {})
     metadata = copy.deepcopy(source.get("metadata") or {})
+    metadata = {
+        key: repair_known_neris_mojibake(value) if isinstance(value, str) else value
+        for key, value in metadata.items()
+    }
     law_id = str(metadata.get("id") or path.stem.removeprefix("reg_"))
     source_file = str(path.relative_to(OUTPUT_DIR))
     detail_url = ((source.get("source") or {}).get("detail_url") or "")
@@ -447,8 +455,8 @@ def build_normalized_law(path: Path) -> dict[str, Any]:
                 {
                     "entry_id": item_id,
                     "code": item.get("code"),
-                    "title": item.get("title") or "",
-                    "text_raw_html": item.get("text") or "",
+                    "title": repair_known_neris_mojibake(item.get("title") or ""),
+                    "text_raw_html": repair_known_neris_mojibake(item.get("text") or ""),
                     "text_plain": item_text["plain"],
                     "text_markdown": item_text["markdown"],
                     "tables": item_text["tables"],
@@ -461,8 +469,8 @@ def build_normalized_law(path: Path) -> dict[str, Any]:
                 "entry_id": entry_id,
                 "code": entry.get("code"),
                 "class_code": entry.get("class_code"),
-                "title": entry.get("title") or "",
-                "text_raw_html": entry.get("text") or "",
+                "title": repair_known_neris_mojibake(entry.get("title") or ""),
+                "text_raw_html": repair_known_neris_mojibake(entry.get("text") or ""),
                 "text_plain": normalized_text["plain"],
                 "text_markdown": normalized_text["markdown"],
                 "tables": normalized_text["tables"],

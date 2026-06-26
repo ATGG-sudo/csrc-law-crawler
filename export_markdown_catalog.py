@@ -74,12 +74,15 @@ def _target_path(
 def _front_matter(doc: dict[str, Any]) -> str:
     metadata = doc.get("metadata") or {}
     preferred = doc.get("preferred_source") or {}
+    effectiveness = doc.get("effectiveness") or {}
     values = {
         "id": doc.get("id"),
         "title": doc.get("title"),
         "document_type": doc.get("document_type"),
         "status": doc.get("status"),
-        "effectiveness": (doc.get("effectiveness") or {}).get("status"),
+        "effectiveness": effectiveness.get("status"),
+        "effectiveness_label": effectiveness.get("label"),
+        "effectiveness_basis": effectiveness.get("basis"),
         "fileno": metadata.get("fileno"),
         "pub_org": metadata.get("pub_org"),
         "pub_date": metadata.get("pub_date"),
@@ -100,6 +103,7 @@ def _front_matter(doc: dict[str, Any]) -> str:
 
 def _metadata_table(doc: dict[str, Any]) -> str:
     metadata = doc.get("metadata") or {}
+    effectiveness = doc.get("effectiveness") or {}
     rows = [
         ("统一法规 ID", doc.get("id")),
         ("文件类型", doc.get("document_type")),
@@ -108,7 +112,9 @@ def _metadata_table(doc: dict[str, Any]) -> str:
         ("发布日期", metadata.get("pub_date")),
         ("施行日期", metadata.get("effective_date")),
         ("效力状态", doc.get("status")),
-        ("归一化效力", (doc.get("effectiveness") or {}).get("status")),
+        ("归一化效力", effectiveness.get("status")),
+        ("归一化效力标签", effectiveness.get("label")),
+        ("归一化效力依据", effectiveness.get("basis")),
         ("首选来源", (doc.get("preferred_source") or {}).get("system")),
     ]
     lines = ["| 字段 | 值 |", "| --- | --- |"]
@@ -232,6 +238,8 @@ def export_catalog_markdown(
                 "id": entity_id,
                 "title": doc.get("title"),
                 "status": doc.get("status"),
+                "effectiveness": (doc.get("effectiveness") or {}).get("status"),
+                "effectiveness_basis": (doc.get("effectiveness") or {}).get("basis"),
                 "bucket": bucket,
                 "source_file": str(path.relative_to(OUTPUT_DIR)),
                 "file": str(out_path.relative_to(OUTPUT_DIR)),

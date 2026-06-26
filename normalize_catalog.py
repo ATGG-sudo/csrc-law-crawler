@@ -19,6 +19,7 @@ from storage import (
     canonical_dir,
     catalog_dir,
     catalog_laws_dir,
+    catalog_relations_path,
     catalog_normalized_dir,
     load_json,
     revisions_path,
@@ -163,36 +164,148 @@ REFERENCE_TYPES = {
     "regulatory_practice",
     "supporting_material",
 }
+OFFICIAL_RULE_TYPES = {
+    "regulation",
+    "self_regulatory_rule",
+}
+COMMENT_DRAFT_PATTERNS = (
+    "征求意见稿",
+    "公开征求意见",
+    "征求意见的通知",
+    "征求意见通知",
+    "草案",
+)
+REFERENCE_TITLE_PATTERNS = (
+    "参考模板",
+    "修订说明",
+    "起草说明",
+    "填写说明",
+    "说明材料",
+    "问题解答",
+    "业务问答",
+    "解读",
+    "培训",
+)
 
 
-def effectiveness_for(entity: dict[str, Any]) -> dict[str, Any]:
+def is_comment_draft_entity(entity: dict[str, Any]) -> bool:
+    metadata = entity.get("metadata") or {}
+    preferred = entity.get("preferred_content") or {}
+    haystack = "\n".join(
+        [
+            str(entity.get("title") or ""),
+            str(metadata.get("name") or ""),
+            str(preferred.get("plain_text") or "")[:1200],
+        ]
+    )
+    return any(pattern in haystack for pattern in COMMENT_DRAFT_PATTERNS)
+
+
+def is_reference_title_entity(entity: dict[str, Any]) -> bool:
+    metadata = entity.get("metadata") or {}
+    haystack = "\n".join(
+        [
+            str(entity.get("title") or ""),
+            str(metadata.get("name") or ""),
+        ]
+    )
+    return any(pattern in haystack for pattern in REFERENCE_TITLE_PATTERNS)
+
+
+def catalog_superseded_by() -> dict[str, list[dict[str, Any]]]:
+    result: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    for relation in load_json(catalog_relations_path(), {}).get("items") or []:
+        if relation.get("relation") != "supersedes":
+            continue
+        superseded_id = str(relation.get("to") or "")
+        superseding_id = str(relation.get("from") or "")
+        if not superseded_id or not superseding_id:
+            continue
+        result[superseded_id].append(
+            {
+                "canonical_id": superseding_id,
+                "source": relation.get("source"),
+                "confidence": relation.get("confidence"),
+                "evidence": relation.get("evidence") or {},
+            }
+        )
+    return result
+
+
+def effectiveness_for(
+    entity: dict[str, Any],
+    *,
+    superseded_by: list[dict[str, Any]] | None = None,
+) -> dict[str, Any]:
     raw_status = str(entity.get("status") or "unknown")
     document_type = str(entity.get("document_type") or "")
+    source_system = (entity.get("preferred_content") or {}).get("source_system")
+    superseded_by = superseded_by or []
     if raw_status in HISTORICAL_STATUSES:
         status = "historical"
         confidence = 1.0
+        basis = "explicit_historical_status"
+        label = raw_status
+    elif is_comment_draft_entity(entity):
+        status = "not_applicable"
+        confidence = 0.98
+        basis = "comment_draft_signal"
+        label = "征求意见/仅供参考"
     elif raw_status == "现行有效":
         status = "current"
         confidence = 1.0
+        basis = "explicit_current_status"
+        label = raw_status
+    elif superseded_by:
+        status = "historical"
+        confidence = max(
+            float(item.get("confidence") or 0.0) for item in superseded_by
+        )
+        basis = "superseded_by_catalog_relation"
+        label = "已被替代"
     elif document_type in REFERENCE_TYPES:
         status = "not_applicable"
         confidence = 0.95
+        basis = "reference_document_type"
+        label = "仅供参考"
+    elif is_reference_title_entity(entity):
+        status = "not_applicable"
+        confidence = 0.9
+        basis = "reference_title_signal"
+        label = "仅供参考"
+    elif (
+        source_system == "amac"
+        and document_type in OFFICIAL_RULE_TYPES
+        and raw_status in {"unknown", "", "None"}
+    ):
+        status = "current"
+        confidence = 0.75
+        basis = "amac_official_rule_default"
+        label = "有效（AMAC未显式标注）"
     else:
         status = "unknown"
         confidence = 0.5
-    return {
+        basis = "insufficient_evidence"
+        label = "待核验"
+    result = {
         "status": status,
         "raw_status": raw_status,
-        "source": (entity.get("preferred_content") or {}).get("source_system"),
+        "label": label,
+        "basis": basis,
+        "source": source_system,
         "confidence": confidence,
         "as_of": utc_now_iso()[:10],
     }
+    if superseded_by:
+        result["superseded_by"] = superseded_by
+    return result
 
 
 def normalize_catalog_entity(
     path: Path,
     *,
     revision_by_law_id: dict[str, str] | None = None,
+    superseded_by_catalog: dict[str, list[dict[str, Any]]] | None = None,
 ) -> dict[str, Any]:
     entity = load_json(path, {})
     entity_id = str(entity.get("id") or path.stem)
@@ -247,7 +360,8 @@ def normalize_catalog_entity(
                 (canonical_dir() / "relations" / "graph.json").relative_to(OUTPUT_DIR)
             ),
         }
-    effectiveness = effectiveness_for(entity)
+    superseded_by = (superseded_by_catalog or {}).get(entity_id) or []
+    effectiveness = effectiveness_for(entity, superseded_by=superseded_by)
 
     return {
         "schema_version": 1,
@@ -260,6 +374,7 @@ def normalize_catalog_entity(
         "document_type": metadata.get("document_type"),
         "status": metadata.get("status"),
         "effectiveness": effectiveness,
+        "superseded_by": superseded_by,
         "metadata": metadata,
         "preferred_source": {
             "system": preferred_system,
@@ -296,6 +411,7 @@ def normalize_catalog(
     revision_by_law_id = (
         load_json(revisions_path(), {}).get("by_law_id") or {}
     )
+    superseded_by_catalog = catalog_superseded_by()
     for index, path in enumerate(source_files, start=1):
         out_path = out_dir / path.name
         if out_path.exists() and not force:
@@ -305,6 +421,7 @@ def normalize_catalog(
             doc = normalize_catalog_entity(
                 path,
                 revision_by_law_id=revision_by_law_id,
+                superseded_by_catalog=superseded_by_catalog,
             )
             save_json(out_path, doc)
             written += 1
@@ -317,6 +434,7 @@ def normalize_catalog(
                 "title": doc.get("title"),
                 "status": doc.get("status"),
                 "effectiveness": (doc.get("effectiveness") or {}).get("status"),
+                "effectiveness_basis": (doc.get("effectiveness") or {}).get("basis"),
                 "source_system": (doc.get("preferred_source") or {}).get("system"),
                 "source_file": str(path.relative_to(OUTPUT_DIR)),
                 "file": str(out_path.relative_to(OUTPUT_DIR)),

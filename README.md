@@ -16,6 +16,7 @@
 - 发现并下载 NERIS 独立附件及正文内嵌图片、附件。
 - 抓取 AMAC 政策法规、页面正文和附件，补充 NERIS 未收录内容。
 - 合并 NERIS 与 AMAC 来源，生成来源无关的统一法规目录。
+- 按来源和标题证据归一化效力状态，并推断正式版替代试行版。
 - 清洗 HTML、提取表格和附件，导出纯文本及 Markdown。
 - 使用 checkpoint 断点续传，并提供多层数据校验脚本。
 
@@ -145,6 +146,7 @@ python export_markdown_laws.py --force --clean
 - 人工阅读：`canonical/markdown/{current,unknown,historical,reference}/`
 - 唯一正式关系图：`canonical/relations/graph.json`
 - 原始数据追溯：`raw/neris/laws/`、`raw/amac/records/`
+- 效力规则说明：[规则说明.md](规则说明.md)
 
 `raw/` 不写入修订引用等派生字段；附件扫描状态独立存放。
 
@@ -179,10 +181,10 @@ python repair.py --phase p2
 OUTPUT_DIR/canonical/
 ├── json/                  # 唯一 normalized JSON
 ├── markdown/
-│   ├── current/           # 明确现行有效
-│   ├── unknown/           # 官网未明确效力
-│   ├── historical/        # 失效、废止、被修改
-│   └── reference/         # 动态、说明、模板、辅助材料
+│   ├── current/           # 现行有效，含 AMAC 正式制度缺省有效
+│   ├── unknown/           # 证据不足，待核验
+│   ├── historical/        # 失效、废止、被修改、已被替代
+│   └── reference/         # 征求意见稿、动态、说明、模板、辅助材料
 ├── relations/graph.json   # 唯一正式关系图
 ├── indexes/source_map.json
 └── manifest.json
@@ -330,7 +332,7 @@ OUTPUT_DIR/
 
 `canonical/relations/graph.json` 合并：
 
-- `supersedes`：官方修订关系。
+- `supersedes`：官方修订关系，以及正式版替代同题名试行版的目录推断关系。
 - `related_to`：NERIS 关联法规。
 - `cited_by_case`：法规/条文到执法文书。
 - `publishes`：公告到正式附件文件。
@@ -391,6 +393,7 @@ OUTPUT_DIR/
 
 - NERIS 来源正文包含源站 HTML；检索和 RAG 应使用 `canonical/`。
 - 修订方向根据官方修订组内的版本号顺序推导；版本号缺失或相同不会生成方向边。
+- 试行版替代关系根据标题、发布日期和发布机构推断，正式使用前仍应人工核验。
 - 自动来源匹配主要依据规范化标题、文号和发布日期，歧义项会进入 `reports/review_queue.json`。
 - PDF、DOCX 等附件的自动抽取受文件格式、扫描质量和源站文件完整性影响。
 - 正式消费入口仅为 `canonical/`；`work/` 内容可以随时由 `raw/` 重建。

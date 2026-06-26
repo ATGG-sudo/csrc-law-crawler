@@ -14,6 +14,7 @@ from pathlib import Path
 from typing import Any
 
 from config import OUTPUT_DIR
+from parser import repair_known_neris_mojibake
 from storage import (
     amac_sources_dir,
     attachment_index_path,
@@ -35,6 +36,18 @@ PUBLISHING_TITLE_RE = re.compile(r"^(?:关于)?(?:发布|印发|公布|修订并
 SPACE_PUNCT_RE = re.compile(r"[\s\u3000·•,，。；;:：()（）\[\]【】《》“”\"'、—\-]+")
 ATTACHMENT_PREFIX_RE = re.compile(r"^附件(?:\s*\d+(?:-\d+)?)?\s*[：:、.\-]?\s*")
 FILE_SUFFIX_RE = re.compile(r"\.(pdf|docx?|xlsx?|zip|rar|rtf|wps)$", re.I)
+TRIAL_MARKER_RE = re.compile(r"[（(]\s*试行\s*[）)]|试行")
+OFFICIAL_RULE_TYPES = {"regulation", "self_regulatory_rule"}
+
+
+def _repair_text_fields(value: Any) -> Any:
+    if isinstance(value, str):
+        return repair_known_neris_mojibake(value)
+    if isinstance(value, dict):
+        return {key: _repair_text_fields(item) for key, item in value.items()}
+    if isinstance(value, list):
+        return [_repair_text_fields(item) for item in value]
+    return value
 
 
 def clean_title(value: Any) -> str:
@@ -46,6 +59,15 @@ def clean_title(value: Any) -> str:
 
 def normalize_title(value: Any) -> str:
     text = clean_title(value)
+    return SPACE_PUNCT_RE.sub("", text).lower()
+
+
+def is_trial_title(value: Any) -> bool:
+    return bool(TRIAL_MARKER_RE.search(clean_title(value)))
+
+
+def normalize_title_without_trial(value: Any) -> str:
+    text = TRIAL_MARKER_RE.sub("", clean_title(value))
     return SPACE_PUNCT_RE.sub("", text).lower()
 
 
@@ -78,7 +100,7 @@ def _neris_records() -> list[dict[str, Any]]:
     records = []
     for path in sorted(laws_dir().glob("reg_*.json")):
         doc = load_json(path, {})
-        metadata = doc.get("metadata") or {}
+        metadata = _repair_text_fields(doc.get("metadata") or {})
         record_id = str(metadata.get("id") or path.stem.removeprefix("reg_"))
         attachment_index = load_json(attachment_index_path(record_id), {})
         records.append(
@@ -86,7 +108,7 @@ def _neris_records() -> list[dict[str, Any]]:
                 "system": "neris",
                 "record_id": record_id,
                 "metadata": metadata,
-                "plain_text": doc.get("full_text") or "",
+                "plain_text": repair_known_neris_mojibake(doc.get("full_text") or ""),
                 "local_file": str(path.relative_to(OUTPUT_DIR)),
                 "page_url": (doc.get("source") or {}).get("detail_url"),
                 "assets": (
@@ -108,8 +130,10 @@ def _amac_records() -> list[dict[str, Any]]:
             {
                 "system": "amac",
                 "record_id": record_id,
-                "metadata": doc.get("metadata") or {},
-                "plain_text": (doc.get("content") or {}).get("plain_text") or "",
+                "metadata": _repair_text_fields(doc.get("metadata") or {}),
+                "plain_text": repair_known_neris_mojibake(
+                    (doc.get("content") or {}).get("plain_text") or ""
+                ),
                 "local_file": str(path.relative_to(OUTPUT_DIR)),
                 "page_url": (doc.get("source") or {}).get("page_url"),
                 "assets": doc.get("assets") or [],
@@ -120,8 +144,10 @@ def _amac_records() -> list[dict[str, Any]]:
             attachment_id = str(attachment.get("source_record_id") or "")
             if not attachment_id:
                 continue
-            attachment_metadata = dict(attachment.get("metadata") or {})
-            parent_metadata = doc.get("metadata") or {}
+            attachment_metadata = _repair_text_fields(
+                dict(attachment.get("metadata") or {})
+            )
+            parent_metadata = _repair_text_fields(doc.get("metadata") or {})
             if attachment_metadata.get("status") in {None, "", "unknown"}:
                 parent_status = parent_metadata.get("status")
                 if parent_status not in {None, "", "unknown"}:
@@ -134,9 +160,9 @@ def _amac_records() -> list[dict[str, Any]]:
                     "system": "amac",
                     "record_id": attachment_id,
                     "metadata": attachment_metadata,
-                    "plain_text": (
-                        attachment.get("content") or {}
-                    ).get("plain_text") or "",
+                    "plain_text": repair_known_neris_mojibake(
+                        (attachment.get("content") or {}).get("plain_text") or ""
+                    ),
                     "local_file": next(
                         (
                             asset.get("local_file")
@@ -165,6 +191,95 @@ def _date_distance(left: Any, right: Any) -> int | None:
         )
     except (TypeError, ValueError):
         return None
+
+
+def _date_sort_value(value: Any) -> int | None:
+    try:
+        from datetime import date
+
+        parsed = date.fromisoformat(str(value)[:10])
+        return parsed.toordinal()
+    except (TypeError, ValueError):
+        return None
+
+
+def _normalized_org(entity: dict[str, Any]) -> str:
+    metadata = entity.get("metadata") or {}
+    return normalize_title(metadata.get("pub_org"))
+
+
+def _pub_date_value(entity: dict[str, Any]) -> int | None:
+    metadata = entity.get("metadata") or {}
+    return _date_sort_value(metadata.get("pub_date"))
+
+
+def _is_official_rule_entity(entity: dict[str, Any]) -> bool:
+    document_type = str(entity.get("document_type") or "")
+    return document_type in OFFICIAL_RULE_TYPES
+
+
+def infer_trial_replacement_relations(
+    entities: dict[str, dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Infer later formal rules replacing same-title trial rules."""
+    by_trial_key: dict[str, list[tuple[str, dict[str, Any]]]] = defaultdict(list)
+    for entity_id, entity in entities.items():
+        title = entity.get("title")
+        key = normalize_title_without_trial(title)
+        if key and _is_official_rule_entity(entity):
+            by_trial_key[key].append((entity_id, entity))
+
+    relations: list[dict[str, Any]] = []
+    for trial_id, trial_entity in entities.items():
+        trial_title = str(trial_entity.get("title") or "")
+        if not is_trial_title(trial_title) or not _is_official_rule_entity(
+            trial_entity
+        ):
+            continue
+        trial_date = _pub_date_value(trial_entity)
+        if trial_date is None:
+            continue
+        trial_org = _normalized_org(trial_entity)
+        candidates: list[tuple[int, str, dict[str, Any]]] = []
+        trial_key = normalize_title_without_trial(trial_title)
+        for formal_id, formal_entity in by_trial_key.get(trial_key) or []:
+            if formal_id == trial_id or is_trial_title(formal_entity.get("title")):
+                continue
+            formal_date = _pub_date_value(formal_entity)
+            if formal_date is None or formal_date <= trial_date:
+                continue
+            formal_org = _normalized_org(formal_entity)
+            if trial_org and formal_org and trial_org != formal_org:
+                continue
+            candidates.append((formal_date, formal_id, formal_entity))
+        if not candidates:
+            continue
+        formal_date, formal_id, formal_entity = sorted(
+            candidates,
+            key=lambda item: item[0],
+        )[0]
+        relations.append(
+            {
+                "from": formal_id,
+                "to": trial_id,
+                "relation": "supersedes",
+                "source": "catalog.trial_replacement",
+                "evidence": {
+                    "inference": "later_same_title_formal_rule_replaces_trial_rule",
+                    "normalized_title": trial_key,
+                    "trial_title": trial_title,
+                    "trial_pub_date": (trial_entity.get("metadata") or {}).get(
+                        "pub_date"
+                    ),
+                    "formal_title": formal_entity.get("title"),
+                    "formal_pub_date": (formal_entity.get("metadata") or {}).get(
+                        "pub_date"
+                    ),
+                },
+                "confidence": 0.86,
+            }
+        )
+    return relations
 
 
 def choose_neris_match(
@@ -222,7 +337,7 @@ def _entity_from_record(record: dict[str, Any], entity_id: str) -> dict[str, Any
     metadata = dict(record.get("metadata") or {})
     title = clean_title(metadata.get("name"))
     metadata["name"] = title
-    text = str(record.get("plain_text") or "")
+    text = repair_known_neris_mojibake(str(record.get("plain_text") or ""))
     return {
         "schema_version": 1,
         "id": entity_id,
@@ -413,6 +528,18 @@ def build_catalog(*, clean: bool = True) -> dict[str, Any]:
                         "confidence": 0.9,
                     },
                 )
+
+    for relation in infer_trial_replacement_relations(entities):
+        add_relation(
+            str(relation["from"]),
+            str(relation["to"]),
+            str(relation["relation"]),
+            {
+                "source": relation.get("source"),
+                "confidence": relation.get("confidence"),
+                **(relation.get("evidence") or {}),
+            },
+        )
 
     for entity_id, entity in entities.items():
         save_json(catalog_laws_dir() / f"{entity_id}.json", entity)

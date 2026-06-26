@@ -6,6 +6,30 @@ from datetime import datetime, timezone
 from typing import Any
 
 
+KNOWN_NERIS_MOJIBAKE = {
+    "\ufffd0\ufffd2": "",
+    "\ufffd6\ufffd1": "·",
+}
+
+
+def repair_known_neris_mojibake(text: str) -> str:
+    """Repair known NERIS replacement-character artifacts in derived text."""
+    value = text
+    for broken, repaired in KNOWN_NERIS_MOJIBAKE.items():
+        value = value.replace(broken, repaired)
+    return value
+
+
+def _clean_source_text(value: Any) -> str:
+    return repair_known_neris_mojibake(str(value or ""))
+
+
+def _clean_source_field(value: Any) -> Any:
+    if isinstance(value, str):
+        return repair_known_neris_mojibake(value)
+    return value
+
+
 def ms_to_date(ms: int | None) -> str | None:
     if ms is None:
         return None
@@ -29,14 +53,14 @@ def parse_entry_items(items: list[dict[str, Any]] | None) -> list[dict[str, Any]
         return []
     result = []
     for item in items:
-        text = (item.get("cntnt") or "").strip()
+        text = _clean_source_text(item.get("cntnt")).strip()
         if not text and not item.get("title"):
             continue
         result.append(
             {
                 "entry_id": item.get("secFutrsLawEntryId"),
                 "code": item.get("secFutrsLawEntryCde"),
-                "title": item.get("title") or "",
+                "title": _clean_source_text(item.get("title")).strip(),
                 "text": text,
             }
         )
@@ -48,8 +72,8 @@ def parse_entries(entries: list[dict[str, Any]] | None) -> list[dict[str, Any]]:
         return []
     result = []
     for entry in entries:
-        title = (entry.get("title") or "").strip()
-        cntnt = (entry.get("cntnt") or "").strip()
+        title = _clean_source_text(entry.get("title")).strip()
+        cntnt = _clean_source_text(entry.get("cntnt")).strip()
         items = parse_entry_items(entry.get("itemList"))
         if not title and not cntnt and not items:
             continue
@@ -102,17 +126,17 @@ def extract_metadata(law: dict[str, Any]) -> dict[str, Any]:
     return {
         "id": law.get("secFutrsLawId"),
         "number": law.get("secFutrsLawNbr"),
-        "name": law.get("secFutrsLawName"),
-        "fileno": law.get("fileno"),
-        "pub_org": law.get("lawPubOrgName"),
+        "name": _clean_source_field(law.get("secFutrsLawName")),
+        "fileno": _clean_source_field(law.get("fileno")),
+        "pub_org": _clean_source_field(law.get("lawPubOrgName")),
         "pub_date": ms_to_date(law.get("pubDate")),
         "effective_date": ms_to_date(law.get("efctvDate")),
         "ineffective_date": ms_to_date(law.get("inefctvDate")),
         "status_code": law.get("lawAthrtyStsCde"),
         "status": law_status_label(law.get("lawAthrtyStsCde")),
         "version": law.get("secFutrsLawVersion"),
-        "body_ago": law.get("bodyAgoCntnt"),
-        "body_aft": law.get("bodyAftCntnt"),
+        "body_ago": _clean_source_field(law.get("bodyAgoCntnt")),
+        "body_aft": _clean_source_field(law.get("bodyAftCntnt")),
     }
 
 

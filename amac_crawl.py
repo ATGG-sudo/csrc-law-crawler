@@ -38,13 +38,37 @@ SITE_SEARCH_URL = urljoin(
 )
 AMAC_ASSETS_ROOT = raw_dir() / "assets" / "amac"
 AMAC_MANIFEST = raw_dir() / "amac" / "manifest.json"
+DEFAULT_XWFB_PAGES = 12
+DEFAULT_XWFB_SECTIONS = [
+    ("通知公告", "xwfb/tzgg/"),
+    ("协会要闻", "xwfb/xhyw/"),
+]
 
-DEFAULT_SITE_KEYWORDS = [
+DEFAULT_PRACTICE_SITE_KEYWORDS = [
     "私募基金登记备案动态",
     "登记备案案例",
     "备案业务问答",
     "备案须知",
     "备案关注要点",
+]
+
+# AMAC sometimes publishes new rules first as www.amac.org.cn notices with
+# attachments before they appear in the fg.amac.org.cn policy index.
+DEFAULT_RULE_NOTICE_KEYWORDS = [
+    "关于发布《私募投资基金",
+    "私募投资基金信息披露",
+    "私募投资基金备案指引",
+    "私募投资基金服务业务",
+    "私募投资基金监督管理",
+    "发布《公开募集证券投资基金",
+    "发布《基金经营机构",
+    "基金从业人员管理规则",
+    "基金从业资格考试管理办法",
+]
+
+DEFAULT_SITE_KEYWORDS = [
+    *DEFAULT_PRACTICE_SITE_KEYWORDS,
+    *DEFAULT_RULE_NOTICE_KEYWORDS,
 ]
 
 ASSET_SUFFIXES = {
@@ -64,6 +88,11 @@ DATE_SUFFIX_RE = re.compile(r"\s+\d{2}-\d{2}$")
 FILENO_RE = re.compile(
     r"((?:中基协|证监会|基金业协会)[发字]?\s*[〔\[]\s*\d{4}\s*[〕\]]\s*\d+\s*号)"
 )
+XWFB_PAGE_COUNT_RE = re.compile(r"createPageHTML\((\d+),")
+XWFB_ARTICLE_DATE_RE = re.compile(r"t(\d{4})(\d{2})(\d{2})_\d+\.html")
+RULE_WORDS = ("办法", "规则", "指引", "准则", "细则", "规定", "指南", "规范", "标准", "模板")
+RULE_NOTICE_ACTION_WORDS = ("发布", "印发", "修订", "公开征求意见", "征求意见")
+NON_RULE_NOTICE_WORDS = ("培训", "解读", "举办", "报名时间", "培训时间", "课程", "会议")
 
 
 def canonical_url(url: str) -> str:
@@ -94,7 +123,7 @@ def classify_document(title: str, url: str) -> str:
         return "publication_notice"
     if "登记备案动态" in title or "/dbdt/" in url:
         return "regulatory_practice"
-    if any(word in title for word in ("办法", "规则", "指引", "准则", "细则", "规定")):
+    if any(word in title for word in RULE_WORDS):
         return "self_regulatory_rule"
     return "supporting_material"
 
@@ -188,36 +217,139 @@ def discover_site_candidates(
 ) -> list[dict[str, Any]]:
     candidates: list[dict[str, Any]] = []
     for keyword in keywords:
-        payload = client.get_json(
-            SITE_SEARCH_URL,
-            {
-                "keyword": keyword,
-                "flag": 1,
-                "pageNo": 1,
-                "pageSize": page_size,
-                "sortFlag": 2,
-                "searchType": 0,
-            },
-        )
-        data = ((payload.get("data") or {}).get("data") or {})
-        result = data.get("wcmDocuments") or {}
-        for row in result.get("dataList") or []:
-            relative_url = str(row.get("docPubUrl") or "")
-            if not relative_url:
-                continue
-            candidates.append(
+        page = 1
+        total: int | None = None
+        seen_for_keyword = 0
+        while total is None or seen_for_keyword < total:
+            payload = client.get_json(
+                SITE_SEARCH_URL,
                 {
-                    "title": row.get("docTitle"),
-                    "url": urljoin(AMAC_BASE_URL, relative_url),
-                    "published_at": row.get("docRelTime"),
-                    "search_content": row.get("docContent"),
-                    "discovery_channel": "site_search",
-                    "search_keyword": keyword,
-                    "search_raw": row,
-                }
+                    "keyword": keyword,
+                    "flag": 1,
+                    "pageNo": page,
+                    "pageSize": page_size,
+                    "sortFlag": 2,
+                    "searchType": 0,
+                },
             )
-            if limit is not None and len(candidates) >= limit:
-                return candidates
+            data = ((payload.get("data") or {}).get("data") or {})
+            result = data.get("wcmDocuments") or {}
+            total = int(result.get("total") or 0)
+            rows = result.get("dataList") or []
+            for row in rows:
+                relative_url = str(row.get("docPubUrl") or "")
+                if not relative_url:
+                    continue
+                candidates.append(
+                    {
+                        "title": row.get("docTitle"),
+                        "url": urljoin(AMAC_BASE_URL, relative_url),
+                        "published_at": row.get("docRelTime"),
+                        "search_content": row.get("docContent"),
+                        "discovery_channel": "site_search",
+                        "search_keyword": keyword,
+                        "search_raw": row,
+                    }
+                )
+                if limit is not None and len(candidates) >= limit:
+                    return candidates
+            if not rows:
+                break
+            seen_for_keyword += len(rows)
+            page += 1
+    return candidates
+
+
+def is_xwfb_rule_notice_title(title: str) -> bool:
+    normalized = _clean_text(title)
+    if not normalized:
+        return False
+    if any(word in normalized for word in NON_RULE_NOTICE_WORDS):
+        return False
+    return (
+        any(word in normalized for word in RULE_NOTICE_ACTION_WORDS)
+        and any(word in normalized for word in RULE_WORDS)
+    )
+
+
+def _xwfb_list_url(section_path: str, page_index: int) -> str:
+    filename = "index.html" if page_index == 0 else f"index_{page_index}.html"
+    return urljoin(AMAC_BASE_URL, f"{section_path.rstrip('/')}/{filename}")
+
+
+def _date_from_xwfb_url(url: str) -> str | None:
+    match = XWFB_ARTICLE_DATE_RE.search(url)
+    if not match:
+        return None
+    year, month, day = match.groups()
+    return f"{year}-{month}-{day}"
+
+
+def discover_xwfb_rule_notice_candidates(
+    client: AmacClient,
+    *,
+    sections: Iterable[tuple[str, str]] = DEFAULT_XWFB_SECTIONS,
+    max_pages: int = DEFAULT_XWFB_PAGES,
+) -> list[dict[str, Any]]:
+    if max_pages <= 0:
+        return []
+
+    candidates: list[dict[str, Any]] = []
+    for section_name, section_path in sections:
+        page_count: int | None = None
+        page_index = 0
+        while page_index < max_pages and (
+            page_count is None or page_index < page_count
+        ):
+            list_url = _xwfb_list_url(section_path, page_index)
+            try:
+                response = client.get(list_url)
+            except requests.HTTPError as exc:
+                if exc.response is not None and exc.response.status_code == 404:
+                    break
+                raise
+            response.encoding = response.apparent_encoding or "utf-8"
+            raw_html = response.text
+            if page_count is None:
+                match = XWFB_PAGE_COUNT_RE.search(raw_html)
+                if match:
+                    page_count = int(match.group(1))
+            soup = BeautifulSoup(raw_html, "html.parser")
+            root = soup.select_one(".content-right .c-box") or soup
+            rows_found = 0
+            for anchor in root.select("li a[href]"):
+                title = _clean_text(anchor.get_text(" ", strip=True))
+                if not is_xwfb_rule_notice_title(title):
+                    continue
+                url = canonical_url(urljoin(list_url, str(anchor.get("href") or "")))
+                rows_found += 1
+                row_text = _clean_text(
+                    anchor.parent.get_text(" ", strip=True) if anchor.parent else ""
+                )
+                date_node = anchor.find_next_sibling("i")
+                candidates.append(
+                    {
+                        "title": title,
+                        "url": url,
+                        "published_at": (
+                            _clean_text(date_node.get_text(" ", strip=True))
+                            if date_node
+                            else _date_from_xwfb_url(url)
+                        ),
+                        "search_content": row_text,
+                        "discovery_channel": "xwfb_rule_notice",
+                        "search_keyword": section_name,
+                        "search_raw": {
+                            "section": section_name,
+                            "list_url": list_url,
+                            "page_index": page_index,
+                            "row_text": row_text,
+                        },
+                    }
+                )
+            if rows_found == 0 and page_count is None:
+                break
+            page_index += 1
     return candidates
 
 
@@ -251,6 +383,23 @@ def _content_root(soup: BeautifulSoup) -> Tag:
     )
 
 
+def _title_from_page(soup: BeautifulSoup) -> str:
+    for selector in (
+        ".content-right .title h3",
+        ".article-title",
+        "h1",
+        "h2",
+    ):
+        node = soup.select_one(selector)
+        if node:
+            title = _clean_text(node.get_text(" ", strip=True))
+            if title:
+                return title
+    if soup.title:
+        return _clean_text(soup.title.get_text(" ", strip=True))
+    return ""
+
+
 def _metadata_from_page(
     soup: BeautifulSoup,
     candidate: dict[str, Any],
@@ -266,8 +415,9 @@ def _metadata_from_page(
             if key:
                 fields[key] = value
     title = _clean_text(str(candidate.get("title") or ""))
-    if not title and soup.title:
-        title = _clean_text(soup.title.get_text(" ", strip=True))
+    page_title = _title_from_page(soup)
+    if not title or "..." in title or "…" in title:
+        title = page_title or title
     fileno_match = FILENO_RE.search(_clean_text(soup.get_text("\n", strip=True)))
     status = fields.get("效力状态") or "unknown"
     return {
@@ -479,6 +629,7 @@ def crawl_amac(
     *,
     policy_limit: int | None = None,
     site_limit: int | None = None,
+    xwfb_pages: int = DEFAULT_XWFB_PAGES,
     keywords: list[str] | None = None,
     download_assets: bool = True,
     force: bool = False,
@@ -487,6 +638,12 @@ def crawl_amac(
 ) -> dict[str, Any]:
     client = AmacClient(delay_min=delay_min, delay_max=delay_max)
     candidates = discover_policy_candidates(client, limit=policy_limit)
+    candidates.extend(
+        discover_xwfb_rule_notice_candidates(
+            client,
+            max_pages=xwfb_pages,
+        )
+    )
     candidates.extend(
         discover_site_candidates(
             client,
@@ -564,6 +721,7 @@ def crawl_amac(
         "skipped": skipped,
         "failed": len(failures),
         "keywords": keywords or DEFAULT_SITE_KEYWORDS,
+        "xwfb_pages": xwfb_pages,
         "items": items,
         "failures": failures,
     }
@@ -575,6 +733,12 @@ def main() -> int:
     parser = argparse.ArgumentParser(description="抓取 AMAC 补充制度和实践材料")
     parser.add_argument("--policy-limit", type=int, default=None)
     parser.add_argument("--site-limit", type=int, default=None)
+    parser.add_argument(
+        "--xwfb-pages",
+        type=int,
+        default=DEFAULT_XWFB_PAGES,
+        help="每个 xwfb 栏目扫描页数；0 表示跳过",
+    )
     parser.add_argument("--keyword", action="append", dest="keywords")
     parser.add_argument("--no-download-assets", action="store_true")
     parser.add_argument("--force", action="store_true")
@@ -585,6 +749,7 @@ def main() -> int:
         manifest = crawl_amac(
             policy_limit=args.policy_limit,
             site_limit=args.site_limit,
+            xwfb_pages=args.xwfb_pages,
             keywords=args.keywords,
             download_assets=not args.no_download_assets,
             force=args.force,
