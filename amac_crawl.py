@@ -6,7 +6,6 @@ from __future__ import annotations
 import argparse
 import hashlib
 import html
-import io
 import random
 import re
 import sys
@@ -19,6 +18,7 @@ import requests
 import urllib3
 from bs4 import BeautifulSoup, Tag
 
+from asset_text import extract_asset_text_bytes
 from config import AMAC_BASE_URL, AMAC_RULES_BASE_URL, OUTPUT_DIR, USER_AGENT
 from storage import (
     amac_sources_dir,
@@ -433,21 +433,7 @@ def _metadata_from_page(
 
 
 def _extract_asset_text(data: bytes, suffix: str) -> str:
-    suffix = suffix.lower()
-    try:
-        if suffix == ".pdf":
-            from pypdf import PdfReader
-
-            reader = PdfReader(io.BytesIO(data))
-            return "\n\n".join((page.extract_text() or "") for page in reader.pages)
-        if suffix == ".docx":
-            from docx import Document
-
-            document = Document(io.BytesIO(data))
-            return "\n".join(paragraph.text for paragraph in document.paragraphs)
-    except Exception:
-        return ""
-    return ""
+    return extract_asset_text_bytes(data, suffix)
 
 
 def _download_asset(

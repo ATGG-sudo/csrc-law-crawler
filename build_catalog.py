@@ -13,6 +13,7 @@ from collections import defaultdict
 from pathlib import Path
 from typing import Any
 
+from asset_text import extract_local_asset_text
 from config import OUTPUT_DIR
 from parser import repair_known_neris_mojibake
 from storage import (
@@ -131,14 +132,16 @@ def _amac_records() -> list[dict[str, Any]]:
                 "system": "amac",
                 "record_id": record_id,
                 "metadata": _repair_text_fields(doc.get("metadata") or {}),
-                "plain_text": repair_known_neris_mojibake(
-                    (doc.get("content") or {}).get("plain_text") or ""
-                ),
                 "local_file": str(path.relative_to(OUTPUT_DIR)),
                 "page_url": (doc.get("source") or {}).get("page_url"),
                 "assets": doc.get("assets") or [],
                 "parent_record_id": None,
             }
+        )
+        records[-1]["plain_text"] = _record_plain_text(
+            records[-1]["metadata"],
+            (doc.get("content") or {}).get("plain_text"),
+            records[-1]["local_file"],
         )
         for attachment in doc.get("attachment_documents") or []:
             attachment_id = str(attachment.get("source_record_id") or "")
@@ -155,22 +158,25 @@ def _amac_records() -> list[dict[str, Any]]:
             for field in ("effective_date", "ineffective_date"):
                 if not attachment_metadata.get(field) and parent_metadata.get(field):
                     attachment_metadata[field] = parent_metadata.get(field)
+            local_file = next(
+                (
+                    asset.get("local_file")
+                    for asset in (doc.get("assets") or [])
+                    if asset.get("asset_id") == attachment.get("asset_id")
+                ),
+                None,
+            )
             records.append(
                 {
                     "system": "amac",
                     "record_id": attachment_id,
                     "metadata": attachment_metadata,
-                    "plain_text": repair_known_neris_mojibake(
-                        (attachment.get("content") or {}).get("plain_text") or ""
+                    "plain_text": _record_plain_text(
+                        attachment_metadata,
+                        (attachment.get("content") or {}).get("plain_text"),
+                        local_file,
                     ),
-                    "local_file": next(
-                        (
-                            asset.get("local_file")
-                            for asset in (doc.get("assets") or [])
-                            if asset.get("asset_id") == attachment.get("asset_id")
-                        ),
-                        None,
-                    ),
+                    "local_file": local_file,
                     "page_url": (attachment.get("source") or {}).get("asset_url"),
                     "assets": [],
                     "parent_record_id": record_id,
@@ -216,6 +222,31 @@ def _pub_date_value(entity: dict[str, Any]) -> int | None:
 def _is_official_rule_entity(entity: dict[str, Any]) -> bool:
     document_type = str(entity.get("document_type") or "")
     return document_type in OFFICIAL_RULE_TYPES
+
+
+def _is_official_rule_metadata(metadata: dict[str, Any]) -> bool:
+    document_type = str(metadata.get("document_type") or "")
+    return document_type in OFFICIAL_RULE_TYPES
+
+
+def _asset_text_fallback(metadata: dict[str, Any], local_file: Any) -> str:
+    if not _is_official_rule_metadata(metadata):
+        return ""
+    local_file_text = str(local_file or "")
+    if not local_file_text:
+        return ""
+    return extract_local_asset_text(OUTPUT_DIR / local_file_text)
+
+
+def _record_plain_text(
+    metadata: dict[str, Any],
+    plain_text: Any,
+    local_file: Any = None,
+) -> str:
+    text = repair_known_neris_mojibake(str(plain_text or ""))
+    if text.strip():
+        return text
+    return _asset_text_fallback(metadata, local_file)
 
 
 def infer_trial_replacement_relations(

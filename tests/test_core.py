@@ -12,7 +12,9 @@ from amac_crawl import (
     discover_xwfb_rule_notice_candidates,
     is_xwfb_rule_notice_title,
 )
+from asset_text import extract_asset_text_bytes
 from build_catalog import (
+    _record_plain_text,
     choose_neris_match,
     infer_trial_replacement_relations,
     is_trial_title,
@@ -114,8 +116,53 @@ class CatalogMatchingTests(unittest.TestCase):
         self.assertEqual("supplemental_copy", status)
         self.assertGreaterEqual(confidence, 0.99)
 
+    def test_metadata_only_rule_reads_text_from_local_asset(self) -> None:
+        with patch(
+            "build_catalog.extract_local_asset_text",
+            return_value="第一条 制度正文。",
+        ) as extract_text:
+            text = _record_plain_text(
+                {"document_type": "self_regulatory_rule"},
+                "",
+                "raw/assets/rule.pdf",
+            )
+        self.assertEqual("第一条 制度正文。", text)
+        extract_text.assert_called_once()
+
+    def test_asset_text_fallback_does_not_override_non_rules_or_existing_text(
+        self,
+    ) -> None:
+        with patch(
+            "build_catalog.extract_local_asset_text",
+            return_value="附件正文",
+        ) as extract_text:
+            self.assertEqual(
+                "已有正文",
+                _record_plain_text(
+                    {"document_type": "self_regulatory_rule"},
+                    "已有正文",
+                    "raw/assets/rule.pdf",
+                ),
+            )
+            self.assertEqual(
+                "",
+                _record_plain_text(
+                    {"document_type": "supporting_material"},
+                    "",
+                    "raw/assets/template.pdf",
+                ),
+            )
+        extract_text.assert_not_called()
+
 
 class CatalogNormalizationTests(unittest.TestCase):
+    def test_text_asset_extraction_decodes_and_cleans_plain_text(self) -> None:
+        text = extract_asset_text_bytes(
+            "第一条  内容\r\n\r\n第二条 内容".encode("gb18030"),
+            ".txt",
+        )
+        self.assertEqual("第一条 内容\n第二条 内容", text)
+
     def test_pdf_hard_wrap_is_reflowed_into_articles(self) -> None:
         markdown = plain_text_to_markdown(
             "1\n某规则\n第一条 这是第\n一段内容。\n第二条 这是第二条。",
