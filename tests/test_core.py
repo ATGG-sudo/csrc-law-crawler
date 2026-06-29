@@ -163,6 +163,27 @@ class CatalogNormalizationTests(unittest.TestCase):
         )
         self.assertEqual("第一条 内容\n第二条 内容", text)
 
+    def test_text_asset_extraction_strips_sequential_page_numbers(self) -> None:
+        text = extract_asset_text_bytes(
+            "1\n标题\n第一条 内容\n2\n续行\n3\n尾段。".encode("utf-8"),
+            ".txt",
+        )
+        self.assertEqual("标题\n第一条 内容\n续行\n尾段。", text)
+
+    def test_article_like_continuation_after_page_number_stays_joined(self) -> None:
+        markdown = plain_text_to_markdown(
+            "第十八条 私募基金管理人应当按照《信息披露办法》\n"
+            "8\n"
+            "第二十条以及本细则规定披露年度报告。\n"
+            "第十九条 下一条内容。",
+        )
+        self.assertIn(
+            "**第十八条** 私募基金管理人应当按照《信息披露办法》第二十条以及本细则规定披露年度报告。",
+            markdown,
+        )
+        self.assertNotIn("**第二十条** 以及", markdown)
+        self.assertIn("**第十九条** 下一条内容。", markdown)
+
     def test_pdf_hard_wrap_is_reflowed_into_articles(self) -> None:
         markdown = plain_text_to_markdown(
             "1\n某规则\n第一条 这是第\n一段内容。\n第二条 这是第二条。",

@@ -11,14 +11,54 @@ from parser import repair_known_neris_mojibake
 
 
 TEXT_ASSET_SUFFIXES = {".pdf", ".docx", ".txt"}
+PAGE_NUMBER_LINE_RE = re.compile(r"\d{1,4}")
 
 
 def _clean_extracted_text(text: str) -> str:
     text = repair_known_neris_mojibake(text)
     text = text.replace("\r\n", "\n").replace("\r", "\n").replace("\xa0", " ")
     lines = [re.sub(r"[ \t\f\v]+", " ", line).strip() for line in text.split("\n")]
-    text = "\n".join(line for line in lines if line)
+    lines = [line for line in lines if line]
+    lines = _strip_sequential_page_numbers(lines)
+    text = "\n".join(lines)
     return re.sub(r"\n{3,}", "\n\n", text).strip()
+
+
+def _strip_sequential_page_numbers(lines: list[str]) -> list[str]:
+    candidates = [
+        (index, int(line))
+        for index, line in enumerate(lines)
+        if PAGE_NUMBER_LINE_RE.fullmatch(line)
+    ]
+    if not candidates:
+        return lines
+
+    remove_indexes: set[int] = set()
+    run: list[tuple[int, int]] = []
+    for candidate in candidates:
+        if run and candidate[1] == run[-1][1] + 1:
+            run.append(candidate)
+        else:
+            _collect_page_number_run(run, remove_indexes)
+            run = [candidate]
+    _collect_page_number_run(run, remove_indexes)
+
+    if not remove_indexes:
+        return lines
+    return [line for index, line in enumerate(lines) if index not in remove_indexes]
+
+
+def _collect_page_number_run(
+    run: list[tuple[int, int]],
+    remove_indexes: set[int],
+) -> None:
+    if not run:
+        return
+    first_index, first_value = run[0]
+    if first_value > 2:
+        return
+    if len(run) >= 3 or (len(run) >= 2 and first_index == 0):
+        remove_indexes.update(index for index, _value in run)
 
 
 def _decode_text_bytes(data: bytes) -> str:

@@ -38,6 +38,7 @@ ARTICLE_RE = re.compile(
 ITEM_RE = re.compile(r"^[（(][一二三四五六七八九十百零〇两\d]+[）)]")
 ASCII_EDGE_RE = re.compile(r"[A-Za-z0-9]$")
 ASCII_START_RE = re.compile(r"^[A-Za-z0-9]")
+PARAGRAPH_END_PUNCT = ("。", "！", "？", "；", "：")
 
 
 def _join_fragment(left: str, right: str) -> str:
@@ -56,12 +57,21 @@ def _format_paragraph(text: str) -> str:
     return f"**{marker}** {remainder}".rstrip()
 
 
+def _is_unfinished_paragraph(text: str) -> bool:
+    return bool(text) and not text.rstrip().endswith(PARAGRAPH_END_PUNCT)
+
+
+def _matches_compact_title(text: str, compact_title: str) -> bool:
+    return bool(compact_title) and re.sub(r"[\s#*]+", "", text) == compact_title
+
+
 def plain_text_to_markdown(text: str, *, title: str = "") -> str:
     """Repair hard-wrapped official text into readable Markdown paragraphs."""
     value = html.unescape(str(text or ""))
     value = value.replace("\r\n", "\n").replace("\r", "\n")
     value = value.replace("\xa0", " ").replace("\u3000", " ")
     raw_lines = [re.sub(r"[ \t]+", " ", line).strip() for line in value.splitlines()]
+    compact_title = re.sub(r"\s+", "", title or "")
 
     blocks: list[str] = []
     paragraph = ""
@@ -82,7 +92,13 @@ def plain_text_to_markdown(text: str, *, title: str = "") -> str:
             flush()
             blocks.append(f"## {line}")
             continue
-        if ARTICLE_RE.match(line) or ITEM_RE.match(line):
+        if (
+            ARTICLE_RE.match(line)
+            and _is_unfinished_paragraph(paragraph)
+            and not _matches_compact_title(paragraph, compact_title)
+        ):
+            paragraph = _join_fragment(paragraph, line)
+        elif ARTICLE_RE.match(line) or ITEM_RE.match(line):
             flush()
             paragraph = line
         else:
@@ -91,7 +107,6 @@ def plain_text_to_markdown(text: str, *, title: str = "") -> str:
             flush()
     flush()
 
-    compact_title = re.sub(r"\s+", "", title or "")
     if blocks and compact_title:
         compact_first_block = re.sub(r"[\s#*]+", "", blocks[0])
         if compact_first_block == compact_title:
