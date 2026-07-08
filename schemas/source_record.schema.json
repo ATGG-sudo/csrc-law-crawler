@@ -1,0 +1,46 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": true,
+  "properties": {
+    "assets": {
+      "items": {
+        "type": "object"
+      },
+      "type": "array"
+    },
+    "attachment_documents": {
+      "items": {
+        "type": "object"
+      },
+      "type": "array"
+    },
+    "content": {
+      "type": "object"
+    },
+    "metadata": {
+      "type": "object"
+    },
+    "schema_version": {
+      "type": "integer"
+    },
+    "source": {
+      "type": "object"
+    },
+    "source_record_id": {
+      "type": "string"
+    },
+    "source_system": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "schema_version",
+    "source_record_id",
+    "source_system",
+    "metadata",
+    "content",
+    "source"
+  ],
+  "title": "SourceRecord",
+  "type": "object"
+}

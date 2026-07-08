@@ -10,11 +10,13 @@ from collections import defaultdict
 from typing import Any
 
 from normalize_laws import normalized_laws_dir
+from runtime import log_event
 from storage import (
     attachment_index_path,
     coverage_gaps_path,
-    laws_dir,
+    iter_reg_law_files,
     load_json,
+    run_with_output_lock,
     save_json,
     utc_now_iso,
 )
@@ -46,9 +48,7 @@ def _finding(
 
 
 def detect_coverage_gaps(*, limit: int | None = None) -> dict[str, Any]:
-    raw_paths = sorted(laws_dir().glob("reg_*.json"))
-    if limit is not None:
-        raw_paths = raw_paths[:limit]
+    raw_paths = iter_reg_law_files(limit)
     findings: list[dict[str, Any]] = []
     series: dict[str, dict[int, list[str]]] = defaultdict(lambda: defaultdict(list))
 
@@ -216,14 +216,17 @@ def main() -> int:
     try:
         result = detect_coverage_gaps(limit=args.limit)
     except Exception as exc:
-        print(f"失败: {exc}", file=sys.stderr)
+        log_event("cli_error", level="ERROR", message=f"失败: {exc}", error_message=str(exc))
         return 1
-    print(
-        f"完成: scanned={result['scanned_laws']} gaps={result['count']} "
-        f"types={result['counts_by_type']} -> {coverage_gaps_path()}"
+    log_event(
+        "cli_result",
+        message=(
+            f"完成: scanned={result['scanned_laws']} gaps={result['count']} "
+            f"types={result['counts_by_type']} -> {coverage_gaps_path()}"
+        ),
     )
     return 0
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    sys.exit(run_with_output_lock(main, "coverage-gaps"))

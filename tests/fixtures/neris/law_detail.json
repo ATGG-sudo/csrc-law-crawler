@@ -1,0 +1,36 @@
+{
+  "lawlist": {
+    "law": {
+      "secFutrsLawId": "fixture-law-1",
+      "secFutrsLawNbr": "CSRC-FIXTURE-1",
+      "secFutrsLawName": "测试法规",
+      "fileno": "测试〔2026〕1号",
+      "lawPubOrgName": "中国证监会",
+      "pubDate": 1782748800000,
+      "efctvDate": 1782835200000,
+      "inefctvDate": null,
+      "lawAthrtyStsCde": "1",
+      "secFutrsLawVersion": "20260630",
+      "bodyAgoCntnt": "为测试解析，制定本规则。",
+      "bodyAftCntnt": "附则。"
+    },
+    "lawEntryVOs": [
+      {
+        "secFutrsLawEntryId": "entry-1",
+        "secFutrsLawEntryCde": "1",
+        "secFutrsLawEntryClsfCde": "chapter",
+        "title": "第一章 总则",
+        "cntnt": "",
+        "itemList": [
+          {
+            "secFutrsLawEntryId": "item-1",
+            "secFutrsLawEntryCde": "1",
+            "title": "第一条",
+            "cntnt": "第一条 固定样本正文。"
+          }
+        ]
+      }
+    ],
+    "lawEntryClsfCde": "fixture"
+  }
+}

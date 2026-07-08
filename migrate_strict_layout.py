@@ -4,12 +4,12 @@
 from __future__ import annotations
 
 import argparse
+import json
 import shutil
 import sys
 from pathlib import Path
 from typing import Any
 
-from config import OUTPUT_DIR
 from storage import (
     amac_sources_dir,
     attachment_index_path,
@@ -17,13 +17,17 @@ from storage import (
     catalog_dir,
     laws_dir,
     load_json,
+    output_dir,
     raw_dir,
+    relative_to_output,
     reports_dir,
+    run_with_output_lock,
     save_json,
     utc_now_iso,
     work_dir,
     writs_dir,
 )
+from runtime import log_event
 
 
 def _merge_move(source: Path, target: Path) -> int:
@@ -115,48 +119,48 @@ def _rewrite_json_tree(root: Path) -> int:
 
 def migrate() -> dict[str, Any]:
     moves = {
-        OUTPUT_DIR / "laws": laws_dir(),
-        OUTPUT_DIR / "writs": writs_dir(),
-        OUTPUT_DIR / "sources" / "amac": amac_sources_dir(),
-        OUTPUT_DIR / "sources" / "amac_manifest.json": raw_dir()
+        output_dir() / "laws": laws_dir(),
+        output_dir() / "writs": writs_dir(),
+        output_dir() / "sources" / "amac": amac_sources_dir(),
+        output_dir() / "sources" / "amac_manifest.json": raw_dir()
         / "amac"
         / "manifest.json",
-        OUTPUT_DIR / "assets" / "amac": raw_dir() / "assets" / "amac",
-        OUTPUT_DIR / "assets" / "neris_attachments": raw_dir()
+        output_dir() / "assets" / "amac": raw_dir() / "assets" / "amac",
+        output_dir() / "assets" / "neris_attachments": raw_dir()
         / "assets"
         / "neris_attachments",
-        OUTPUT_DIR / "assets" / "laws": raw_dir() / "assets" / "embedded",
-        OUTPUT_DIR / "relations" / "revision_evidence_cache": raw_dir()
+        output_dir() / "assets" / "laws": raw_dir() / "assets" / "embedded",
+        output_dir() / "relations" / "revision_evidence_cache": raw_dir()
         / "neris"
         / "revision_evidence",
-        OUTPUT_DIR / "manifest.json": raw_dir() / "neris" / "manifest.json",
-        OUTPUT_DIR / "checkpoint.json": work_dir()
+        output_dir() / "manifest.json": raw_dir() / "neris" / "manifest.json",
+        output_dir() / "checkpoint.json": work_dir()
         / "checkpoints"
         / "checkpoint.json",
-        OUTPUT_DIR / "normalized": work_dir() / "normalized_neris",
-        OUTPUT_DIR / "catalog" / "laws": catalog_dir() / "laws",
-        OUTPUT_DIR / "catalog" / "manifest.json": catalog_dir() / "manifest.json",
-        OUTPUT_DIR / "catalog" / "review_queue.json": reports_dir()
+        output_dir() / "normalized": work_dir() / "normalized_neris",
+        output_dir() / "catalog" / "laws": catalog_dir() / "laws",
+        output_dir() / "catalog" / "manifest.json": catalog_dir() / "manifest.json",
+        output_dir() / "catalog" / "review_queue.json": reports_dir()
         / "review_queue.json",
-        OUTPUT_DIR / "relations" / "revisions.json": work_dir()
+        output_dir() / "relations" / "revisions.json": work_dir()
         / "relations"
         / "revisions.json",
-        OUTPUT_DIR / "relations" / "related_laws.json": work_dir()
+        output_dir() / "relations" / "related_laws.json": work_dir()
         / "relations"
         / "related_laws.json",
-        OUTPUT_DIR / "relations" / "cases.json": work_dir()
+        output_dir() / "relations" / "cases.json": work_dir()
         / "relations"
         / "cases.json",
-        OUTPUT_DIR / "relations" / "catalog_relations.json": work_dir()
+        output_dir() / "relations" / "catalog_relations.json": work_dir()
         / "relations"
         / "catalog_relations.json",
-        OUTPUT_DIR / "relations" / "source_matches.json": canonical_dir()
+        output_dir() / "relations" / "source_matches.json": canonical_dir()
         / "indexes"
         / "source_map.json",
-        OUTPUT_DIR / "relations" / "coverage_gaps.json": reports_dir()
+        output_dir() / "relations" / "coverage_gaps.json": reports_dir()
         / "coverage_gaps.json",
-        OUTPUT_DIR / "sample": work_dir() / "samples",
-        OUTPUT_DIR / "crawl.log": work_dir() / "logs" / "crawl.log",
+        output_dir() / "sample": work_dir() / "samples",
+        output_dir() / "crawl.log": work_dir() / "logs" / "crawl.log",
     }
     moved = 0
     for source, target in moves.items():
@@ -196,14 +200,14 @@ def cleanup_legacy() -> dict[str, Any]:
 
     removed: list[str] = []
     legacy_paths = [
-        OUTPUT_DIR / "markdown",
-        OUTPUT_DIR / "catalog",
-        OUTPUT_DIR / "relations",
-        OUTPUT_DIR / "sources",
-        OUTPUT_DIR / "assets",
-        OUTPUT_DIR / "normalized",
-        OUTPUT_DIR / "laws",
-        OUTPUT_DIR / "writs",
+        output_dir() / "markdown",
+        output_dir() / "catalog",
+        output_dir() / "relations",
+        output_dir() / "sources",
+        output_dir() / "assets",
+        output_dir() / "normalized",
+        output_dir() / "laws",
+        output_dir() / "writs",
     ]
     for path in legacy_paths:
         if not path.exists():
@@ -212,7 +216,7 @@ def cleanup_legacy() -> dict[str, Any]:
             shutil.rmtree(path)
         else:
             path.unlink()
-        removed.append(str(path.relative_to(OUTPUT_DIR)))
+        removed.append(relative_to_output(path))
     result = {
         "schema_version": 1,
         "updated_at": utc_now_iso(),
@@ -229,18 +233,18 @@ def main() -> int:
     parser.add_argument("--cleanup", action="store_true", help="验证后删除旧派生目录")
     args = parser.parse_args()
     if not args.execute and not args.cleanup:
-        print("未执行：使用 --execute 迁移，最终使用 --cleanup 清理旧目录")
+        log_event("cli_message", message="未执行：使用 --execute 迁移，最终使用 --cleanup 清理旧目录")
         return 0
     try:
         if args.execute:
-            print(migrate())
+            log_event("cli_result", message=json.dumps(migrate(), ensure_ascii=False))
         if args.cleanup:
-            print(cleanup_legacy())
+            log_event("cli_result", message=json.dumps(cleanup_legacy(), ensure_ascii=False))
     except Exception as exc:
-        print(f"失败: {exc}", file=sys.stderr)
+        log_event("cli_error", level="ERROR", message=f"失败: {exc}", error_message=str(exc))
         return 1
     return 0
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    sys.exit(run_with_output_lock(main, "migrate-strict-layout"))

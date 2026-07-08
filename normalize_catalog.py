@@ -13,21 +13,39 @@ from collections import defaultdict
 from pathlib import Path
 from typing import Any
 
-from config import OUTPUT_DIR
+from catalog_rules import (
+    COMMENT_DRAFT_PATTERNS,
+    EFFECT_AMAC_OFFICIAL_DEFAULT,
+    EFFECT_COMMENT_DRAFT,
+    EFFECT_EXPLICIT_CURRENT,
+    EFFECT_EXPLICIT_HISTORICAL,
+    EFFECT_INSUFFICIENT_EVIDENCE,
+    EFFECT_REFERENCE_DOCUMENT_TYPE,
+    EFFECT_REFERENCE_TITLE,
+    EFFECT_SUPERSEDED_BY_CATALOG,
+    HISTORICAL_STATUSES,
+    OFFICIAL_RULE_TYPES,
+    REFERENCE_TITLE_PATTERNS,
+    REFERENCE_TYPES,
+)
 from normalize_laws import normalized_laws_dir
+from runtime import log_event
 from storage import (
     canonical_dir,
     catalog_dir,
     catalog_laws_dir,
     catalog_relations_path,
     catalog_normalized_dir,
+    listed_output_files,
     load_json,
+    output_path,
+    relative_to_output,
     revisions_path,
+    run_with_output_lock,
     save_json,
     utc_now_iso,
 )
 
-CATALOG_NORMALIZED_MANIFEST = catalog_dir() / "normalized_manifest.json"
 PAGE_NUMBER_RE = re.compile(r"^\s*\d{1,3}\s*$")
 CHAPTER_RE = re.compile(
     r"^第[一二三四五六七八九十百千万零〇两\d]+[章节编]\s*"
@@ -39,6 +57,33 @@ ITEM_RE = re.compile(r"^[（(][一二三四五六七八九十百零〇两\d]+[�
 ASCII_EDGE_RE = re.compile(r"[A-Za-z0-9]$")
 ASCII_START_RE = re.compile(r"^[A-Za-z0-9]")
 PARAGRAPH_END_PUNCT = ("。", "！", "？", "；", "：")
+TITLE_HISTORICAL_PATTERNS = (
+    "【已废止】",
+    "〖已废止〗",
+    "（已废止）",
+    "(已废止)",
+    "【失效】",
+    "〖失效〗",
+    "（失效）",
+    "(失效)",
+    "已失效",
+)
+PUBLISH_DATE_EFFECTIVE_PATTERNS = (
+    "自发布之日起施行",
+    "自发布之日起实施",
+    "自公布之日起施行",
+    "自公布之日起实施",
+    "自印发之日起施行",
+    "自印发之日起实施",
+)
+
+
+def catalog_normalized_manifest_path() -> Path:
+    return catalog_dir() / "normalized_manifest.json"
+
+
+def catalog_manifest_path() -> Path:
+    return catalog_dir() / "manifest.json"
 
 
 def _join_fragment(left: str, right: str) -> str:
@@ -130,7 +175,7 @@ def _source_assets(entity: dict[str, Any]) -> list[dict[str, Any]]:
         digest = hashlib.sha1(
             f"{source.get('system')}:{source.get('record_id')}:{key}".encode("utf-8")
         ).hexdigest()[:20]
-        local_path = OUTPUT_DIR / local_file if local_file else None
+        local_path = output_path(local_file) if local_file else None
         sha256 = _sha256_file(local_path) if local_path and local_path.exists() else None
         assets.append(
             {
@@ -230,43 +275,6 @@ def _merge_assets(
     return list(result.values())
 
 
-HISTORICAL_STATUSES = {
-    "已失效",
-    "失效",
-    "已废止",
-    "废止",
-    "已被修改",
-    "被修改",
-}
-REFERENCE_TYPES = {
-    "publication_notice",
-    "regulatory_practice",
-    "supporting_material",
-}
-OFFICIAL_RULE_TYPES = {
-    "regulation",
-    "self_regulatory_rule",
-}
-COMMENT_DRAFT_PATTERNS = (
-    "征求意见稿",
-    "公开征求意见",
-    "征求意见的通知",
-    "征求意见通知",
-    "草案",
-)
-REFERENCE_TITLE_PATTERNS = (
-    "参考模板",
-    "修订说明",
-    "起草说明",
-    "填写说明",
-    "说明材料",
-    "问题解答",
-    "业务问答",
-    "解读",
-    "培训",
-)
-
-
 def is_comment_draft_entity(entity: dict[str, Any]) -> bool:
     metadata = entity.get("metadata") or {}
     preferred = entity.get("preferred_content") or {}
@@ -278,6 +286,17 @@ def is_comment_draft_entity(entity: dict[str, Any]) -> bool:
         ]
     )
     return any(pattern in haystack for pattern in COMMENT_DRAFT_PATTERNS)
+
+
+def is_historical_title_entity(entity: dict[str, Any]) -> bool:
+    metadata = entity.get("metadata") or {}
+    haystack = "\n".join(
+        [
+            str(entity.get("title") or ""),
+            str(metadata.get("name") or ""),
+        ]
+    )
+    return any(pattern in haystack for pattern in TITLE_HISTORICAL_PATTERNS)
 
 
 def is_reference_title_entity(entity: dict[str, Any]) -> bool:
@@ -304,11 +323,116 @@ def catalog_superseded_by() -> dict[str, list[dict[str, Any]]]:
             {
                 "canonical_id": superseding_id,
                 "source": relation.get("source"),
+                "rule_id": relation.get("rule_id"),
                 "confidence": relation.get("confidence"),
                 "evidence": relation.get("evidence") or {},
             }
         )
     return result
+
+
+def _catalog_entity_context(path: Path) -> tuple[dict[str, Any], str, str, dict[str, Any]]:
+    entity = load_json(path, {})
+    entity_id = str(entity.get("id") or path.stem)
+    title = str(entity.get("title") or entity_id)
+    source_metadata = dict(entity.get("metadata") or {})
+    original_source_id = source_metadata.get("id")
+    metadata = {
+        **source_metadata,
+        "id": entity_id,
+        "canonical_id": entity_id,
+        "source_id": original_source_id,
+        "name": title,
+        "document_type": entity.get("document_type") or source_metadata.get("document_type"),
+        "status": entity.get("status") or source_metadata.get("status") or "unknown",
+    }
+    return entity, entity_id, title, metadata
+
+
+def _preferred_content_state(
+    entity: dict[str, Any],
+    title: str,
+) -> tuple[
+    str,
+    str,
+    str,
+    str,
+    list[dict[str, Any]],
+    list[dict[str, Any]],
+    str,
+]:
+    preferred = entity.get("preferred_content") or {}
+    preferred_system = str(preferred.get("source_system") or "")
+    preferred_record_id = str(preferred.get("source_record_id") or "")
+    plain_text = str(preferred.get("plain_text") or "")
+    markdown = ""
+    tables: list[dict[str, Any]] = []
+    inherited_assets: list[dict[str, Any]] = []
+
+    reused_neris = False
+    if preferred_system == "neris" and preferred_record_id:
+        neris_path = normalized_laws_dir() / f"reg_{preferred_record_id}.json"
+        if neris_path.exists():
+            reused_neris = True
+            neris = load_json(neris_path, {})
+            plain_text = str(neris.get("full_text_plain") or plain_text)
+            markdown = str(neris.get("full_text_markdown") or "")
+            tables = neris.get("tables") or []
+            inherited_assets = neris.get("assets") or []
+
+    if not markdown:
+        markdown = plain_text_to_markdown(plain_text, title=title)
+    normalization_method = "neris_normalized_reuse" if reused_neris else "plain_text_reflow"
+    return (
+        preferred_system,
+        preferred_record_id,
+        plain_text,
+        markdown,
+        tables,
+        inherited_assets,
+        normalization_method,
+    )
+
+
+def _catalog_revision_ref(
+    entity: dict[str, Any],
+    revision_by_law_id: dict[str, str],
+) -> dict[str, Any] | None:
+    neris_source_id = next(
+        (
+            str(source.get("record_id"))
+            for source in (entity.get("sources") or [])
+            if source.get("system") == "neris" and source.get("record_id")
+        ),
+        None,
+    )
+    if not neris_source_id or neris_source_id not in revision_by_law_id:
+        return None
+    return {
+        "family_id": revision_by_law_id[neris_source_id],
+        "relations_file": str(
+            relative_to_output(canonical_dir() / "relations" / "graph.json")
+        ),
+    }
+
+
+def _catalog_content_status(plain_text: str) -> str:
+    return "full_text" if plain_text.strip() else "metadata_only"
+
+
+def _version_date(value: Any) -> str | None:
+    text = str(value or "")
+    if len(text) == 8 and text.isdigit():
+        return f"{text[:4]}-{text[4:6]}-{text[6:]}"
+    return None
+
+
+def _infer_effective_date(metadata: dict[str, Any], plain_text: str) -> str | None:
+    if metadata.get("effective_date"):
+        return str(metadata["effective_date"])
+    if any(pattern in plain_text for pattern in PUBLISH_DATE_EFFECTIVE_PATTERNS):
+        return _version_date(metadata.get("version")) or metadata.get("pub_date")
+    return None
 
 
 def effectiveness_for(
@@ -321,35 +445,47 @@ def effectiveness_for(
     source_system = (entity.get("preferred_content") or {}).get("source_system")
     superseded_by = superseded_by or []
     if raw_status in HISTORICAL_STATUSES:
+        rule = EFFECT_EXPLICIT_HISTORICAL
         status = "historical"
-        confidence = 1.0
+        confidence = rule.confidence
         basis = "explicit_historical_status"
         label = raw_status
+    elif is_historical_title_entity(entity):
+        rule = EFFECT_EXPLICIT_HISTORICAL
+        status = "historical"
+        confidence = rule.confidence
+        basis = "explicit_historical_status"
+        label = "已废止/失效（标题标注）"
     elif is_comment_draft_entity(entity):
+        rule = EFFECT_COMMENT_DRAFT
         status = "not_applicable"
-        confidence = 0.98
+        confidence = rule.confidence
         basis = "comment_draft_signal"
         label = "征求意见/仅供参考"
-    elif raw_status == "现行有效":
-        status = "current"
-        confidence = 1.0
-        basis = "explicit_current_status"
-        label = raw_status
     elif superseded_by:
+        rule = EFFECT_SUPERSEDED_BY_CATALOG
         status = "historical"
         confidence = max(
             float(item.get("confidence") or 0.0) for item in superseded_by
         )
         basis = "superseded_by_catalog_relation"
         label = "已被替代"
+    elif raw_status == "现行有效":
+        rule = EFFECT_EXPLICIT_CURRENT
+        status = "current"
+        confidence = rule.confidence
+        basis = "explicit_current_status"
+        label = raw_status
     elif document_type in REFERENCE_TYPES:
+        rule = EFFECT_REFERENCE_DOCUMENT_TYPE
         status = "not_applicable"
-        confidence = 0.95
+        confidence = rule.confidence
         basis = "reference_document_type"
         label = "仅供参考"
     elif is_reference_title_entity(entity):
+        rule = EFFECT_REFERENCE_TITLE
         status = "not_applicable"
-        confidence = 0.9
+        confidence = rule.confidence
         basis = "reference_title_signal"
         label = "仅供参考"
     elif (
@@ -357,13 +493,15 @@ def effectiveness_for(
         and document_type in OFFICIAL_RULE_TYPES
         and raw_status in {"unknown", "", "None"}
     ):
+        rule = EFFECT_AMAC_OFFICIAL_DEFAULT
         status = "current"
-        confidence = 0.75
+        confidence = rule.confidence
         basis = "amac_official_rule_default"
         label = "有效（AMAC未显式标注）"
     else:
+        rule = EFFECT_INSUFFICIENT_EVIDENCE
         status = "unknown"
-        confidence = 0.5
+        confidence = rule.confidence
         basis = "insufficient_evidence"
         label = "待核验"
     result = {
@@ -371,6 +509,7 @@ def effectiveness_for(
         "raw_status": raw_status,
         "label": label,
         "basis": basis,
+        "rule_id": rule.rule_id,
         "source": source_system,
         "confidence": confidence,
         "as_of": utc_now_iso()[:10],
@@ -386,66 +525,29 @@ def normalize_catalog_entity(
     revision_by_law_id: dict[str, str] | None = None,
     superseded_by_catalog: dict[str, list[dict[str, Any]]] | None = None,
 ) -> dict[str, Any]:
-    entity = load_json(path, {})
-    entity_id = str(entity.get("id") or path.stem)
-    title = str(entity.get("title") or entity_id)
-    source_metadata = dict(entity.get("metadata") or {})
-    original_source_id = source_metadata.get("id")
-    metadata = {
-        **source_metadata,
-        "id": entity_id,
-        "canonical_id": entity_id,
-        "source_id": original_source_id,
-        "name": title,
-        "document_type": entity.get("document_type") or source_metadata.get("document_type"),
-        "status": entity.get("status") or source_metadata.get("status") or "unknown",
-    }
-    preferred = entity.get("preferred_content") or {}
-    preferred_system = str(preferred.get("source_system") or "")
-    preferred_record_id = str(preferred.get("source_record_id") or "")
-    plain_text = str(preferred.get("plain_text") or "")
-    markdown = ""
-    tables: list[dict[str, Any]] = []
-    inherited_assets: list[dict[str, Any]] = []
-    revision_ref = None
-    normalization_method = "plain_text_reflow"
-
-    if preferred_system == "neris" and preferred_record_id:
-        neris_path = normalized_laws_dir() / f"reg_{preferred_record_id}.json"
-        if neris_path.exists():
-            neris = load_json(neris_path, {})
-            plain_text = str(neris.get("full_text_plain") or plain_text)
-            markdown = str(neris.get("full_text_markdown") or "")
-            tables = neris.get("tables") or []
-            inherited_assets = neris.get("assets") or []
-            normalization_method = "neris_normalized_reuse"
-
-    if not markdown:
-        markdown = plain_text_to_markdown(plain_text, title=title)
-    content_status = "full_text" if plain_text.strip() else "metadata_only"
+    entity, entity_id, title, metadata = _catalog_entity_context(path)
+    (
+        preferred_system,
+        preferred_record_id,
+        plain_text,
+        markdown,
+        tables,
+        inherited_assets,
+        normalization_method,
+    ) = _preferred_content_state(entity, title)
+    content_status = _catalog_content_status(plain_text)
     revision_by_law_id = revision_by_law_id or {}
-    neris_source_id = next(
-        (
-            str(source.get("record_id"))
-            for source in (entity.get("sources") or [])
-            if source.get("system") == "neris" and source.get("record_id")
-        ),
-        None,
-    )
-    if neris_source_id and neris_source_id in revision_by_law_id:
-        revision_ref = {
-            "family_id": revision_by_law_id[neris_source_id],
-            "relations_file": str(
-                (canonical_dir() / "relations" / "graph.json").relative_to(OUTPUT_DIR)
-            ),
-        }
+    revision_ref = _catalog_revision_ref(entity, revision_by_law_id)
     superseded_by = (superseded_by_catalog or {}).get(entity_id) or []
+    inferred_effective_date = _infer_effective_date(metadata, plain_text)
+    if inferred_effective_date:
+        metadata["effective_date"] = inferred_effective_date
     effectiveness = effectiveness_for(entity, superseded_by=superseded_by)
 
     return {
         "schema_version": 1,
         "id": entity_id,
-        "source_file": str(path.relative_to(OUTPUT_DIR)),
+        "source_file": relative_to_output(path),
         "normalized_at": utc_now_iso(),
         "normalization_method": normalization_method,
         "content_status": content_status,
@@ -474,9 +576,13 @@ def normalize_catalog(
     force: bool = False,
     clean: bool = False,
 ) -> dict[str, Any]:
-    source_files = sorted(catalog_laws_dir().glob("law_*.json"))
-    if limit is not None:
-        source_files = source_files[:limit]
+    source_files = listed_output_files(
+        catalog_manifest_path(),
+        field="file",
+        fallback_dir=catalog_laws_dir(),
+        pattern="law_*.json",
+        limit=limit,
+    )
     out_dir = catalog_normalized_dir()
     if clean and out_dir.exists():
         shutil.rmtree(out_dir)
@@ -515,21 +621,26 @@ def normalize_catalog(
                 "effectiveness": (doc.get("effectiveness") or {}).get("status"),
                 "effectiveness_basis": (doc.get("effectiveness") or {}).get("basis"),
                 "source_system": (doc.get("preferred_source") or {}).get("system"),
-                "source_file": str(path.relative_to(OUTPUT_DIR)),
-                "file": str(out_path.relative_to(OUTPUT_DIR)),
+                "source_file": relative_to_output(path),
+                "file": relative_to_output(out_path),
                 "text_length": len(str(doc.get("full_text_plain") or "")),
                 "content_status": doc.get("content_status"),
                 "assets": len(doc.get("assets") or []),
             }
         )
         if index % 100 == 0 or index == len(source_files):
-            print(f"  normalized catalog {index}/{len(source_files)}")
+            log_event(
+                "normalize_progress",
+                message=f"  normalized catalog {index}/{len(source_files)}",
+                index=index,
+                total=len(source_files),
+            )
 
     manifest = {
         "schema_version": 1,
         "updated_at": utc_now_iso(),
-        "source_dir": str(catalog_laws_dir().relative_to(OUTPUT_DIR)),
-        "normalized_dir": str(out_dir.relative_to(OUTPUT_DIR)),
+        "source_dir": relative_to_output(catalog_laws_dir()),
+        "normalized_dir": relative_to_output(out_dir),
         "count": len(items),
         "written": written,
         "skipped": skipped,
@@ -537,7 +648,7 @@ def normalize_catalog(
         "normalization_methods": dict(sorted(method_counts.items())),
         "items": items,
     }
-    save_json(CATALOG_NORMALIZED_MANIFEST, manifest)
+    save_json(catalog_normalized_manifest_path(), manifest)
     return manifest
 
 
@@ -556,15 +667,18 @@ def main() -> int:
     except KeyboardInterrupt:
         return 130
     except Exception as exc:
-        print(f"失败: {exc}", file=sys.stderr)
+        log_event("cli_error", level="ERROR", message=f"失败: {exc}", error_message=str(exc))
         return 1
-    print(
-        f"完成: count={manifest['count']} written={manifest['written']} "
-        f"skipped={manifest['skipped']} empty={manifest['empty_content']} "
-        f"-> {CATALOG_NORMALIZED_MANIFEST}"
+    log_event(
+        "cli_result",
+        message=(
+            f"完成: count={manifest['count']} written={manifest['written']} "
+            f"skipped={manifest['skipped']} empty={manifest['empty_content']} "
+            f"-> {catalog_normalized_manifest_path()}"
+        ),
     )
     return 0
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    sys.exit(run_with_output_lock(main, "normalize-catalog"))

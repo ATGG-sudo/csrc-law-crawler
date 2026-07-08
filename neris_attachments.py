@@ -5,7 +5,7 @@ from __future__ import annotations
 
 import argparse
 import concurrent.futures
-import hashlib
+import json
 import mimetypes
 import sys
 from pathlib import Path
@@ -14,19 +14,20 @@ from urllib.parse import urlparse
 
 from api import fetch_local_files, local_file_download_url
 from client import HumanLikeClient
-from config import OUTPUT_DIR
+from config import DELAY_MAX, DELAY_MIN
+from runtime import log_event
 from storage import (
     attachment_index_path,
     iter_reg_law_ids,
     load_json,
+    output_path,
     raw_dir,
     reg_file_path,
+    relative_to_output,
+    run_with_output_lock,
     save_json,
     utc_now_iso,
 )
-
-ATTACHMENTS_ROOT = raw_dir() / "assets" / "neris_attachments"
-
 
 def normalize_attachment(raw: dict[str, Any]) -> dict[str, Any]:
     attachment_id = str(raw.get("lawAtchId") or "")
@@ -43,6 +44,10 @@ def normalize_attachment(raw: dict[str, Any]) -> dict[str, Any]:
         "download_status": "pending",
         "raw": raw,
     }
+
+
+def attachments_root() -> Path:
+    return raw_dir() / "assets" / "neris_attachments"
 
 
 def discover_attachments(client: HumanLikeClient, law_id: str) -> list[dict[str, Any]]:
@@ -80,21 +85,23 @@ def download_attachment(
     source_url = str(item.get("source_url") or "")
     if not source_url:
         raise ValueError("attachment has no source_url")
-    data, content_type = client.get_binary(
+    payload = client.get_binary_payload(
         source_url,
         headers={"Accept": "*/*", "Referer": source_url},
     )
+    data = payload.data
+    content_type = payload.content_type
     extension = _extension(item, data, content_type)
-    law_dir = ATTACHMENTS_ROOT / law_id
+    law_dir = attachments_root() / law_id
     law_dir.mkdir(parents=True, exist_ok=True)
     path = law_dir / f"{item['attachment_id']}{extension}"
     path.write_bytes(data)
     item.update(
         {
-            "local_file": str(path.relative_to(OUTPUT_DIR)),
+            "local_file": relative_to_output(path),
             "content_type": content_type,
-            "size_bytes": len(data),
-            "sha256": hashlib.sha256(data).hexdigest(),
+            "size_bytes": payload.size_bytes,
+            "sha256": payload.sha256,
             "download_status": "ok",
             "downloaded_at": utc_now_iso(),
         }
@@ -129,7 +136,7 @@ def update_law_attachments(
         previous = existing_by_id.get(str(item["attachment_id"])) or {}
         item = {**item, **previous, "raw": item.get("raw")}
         local_file = item.get("local_file")
-        local_ok = bool(local_file and (OUTPUT_DIR / str(local_file)).exists())
+        local_ok = bool(local_file and output_path(str(local_file)).exists())
         if download and (force or not local_ok):
             try:
                 download_attachment(client, law_id, item)
@@ -172,12 +179,11 @@ def run(
     def process(
         law_id: str,
     ) -> tuple[str, list[dict[str, Any]], str | None]:
-        client_kwargs = {"batch_size": 0}
-        if delay_min is not None:
-            client_kwargs["delay_min"] = delay_min
-        if delay_max is not None:
-            client_kwargs["delay_max"] = delay_max
-        client = HumanLikeClient(**client_kwargs)
+        client = HumanLikeClient(
+            batch_size=0,
+            delay_min=delay_min if delay_min is not None else DELAY_MIN,
+            delay_max=delay_max if delay_max is not None else DELAY_MAX,
+        )
         try:
             items = update_law_attachments(
                 client,
@@ -204,7 +210,13 @@ def run(
             counts["laws"] += 1
             if error:
                 counts["law_failures"] += 1
-                print(f"  !! {law_id}: {error}")
+                log_event(
+                    "neris_attachment_law_failed",
+                    level="ERROR",
+                    message=f"  !! {law_id}: {error}",
+                    law_id=law_id,
+                    error_message=error,
+                )
             counts["attachments"] += len(items)
             counts["downloaded"] += sum(
                 1 for item in items if item.get("download_status") == "ok"
@@ -213,9 +225,16 @@ def run(
                 1 for item in items if item.get("download_status") == "failed"
             )
             if items or index % 100 == 0 or index == len(law_ids):
-                print(
-                    f"[{index}/{len(law_ids)}] {law_id}: "
-                    f"attachments={len(items)}"
+                log_event(
+                    "neris_attachment_progress",
+                    message=(
+                        f"[{index}/{len(law_ids)}] {law_id}: "
+                        f"attachments={len(items)}"
+                    ),
+                    index=index,
+                    total=len(law_ids),
+                    law_id=law_id,
+                    attachments=len(items),
                 )
     finally:
         if workers > 1:
@@ -244,11 +263,11 @@ def main() -> int:
     except KeyboardInterrupt:
         return 130
     except Exception as exc:
-        print(f"失败: {exc}", file=sys.stderr)
+        log_event("cli_error", level="ERROR", message=f"失败: {exc}", error_message=str(exc))
         return 1
-    print(counts)
+    log_event("cli_result", message=json.dumps(counts, ensure_ascii=False))
     return 0
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    sys.exit(run_with_output_lock(main, "neris-attachments"))

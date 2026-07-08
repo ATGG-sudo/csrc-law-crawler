@@ -1,0 +1,77 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": true,
+  "properties": {
+    "assets": {
+      "items": {
+        "type": "object"
+      },
+      "type": "array"
+    },
+    "document_type": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "effectiveness": {
+      "type": "object"
+    },
+    "full_text_markdown": {
+      "type": "string"
+    },
+    "full_text_plain": {
+      "type": "string"
+    },
+    "id": {
+      "type": "string"
+    },
+    "metadata": {
+      "type": "object"
+    },
+    "preferred_source": {
+      "type": "object"
+    },
+    "revision_ref": {
+      "type": [
+        "object",
+        "null"
+      ]
+    },
+    "schema_version": {
+      "type": "integer"
+    },
+    "sources": {
+      "items": {
+        "type": "object"
+      },
+      "type": "array"
+    },
+    "status": {
+      "type": "string"
+    },
+    "tables": {
+      "items": {
+        "type": "object"
+      },
+      "type": "array"
+    },
+    "title": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "schema_version",
+    "id",
+    "title",
+    "document_type",
+    "status",
+    "effectiveness",
+    "metadata",
+    "sources",
+    "full_text_plain",
+    "full_text_markdown"
+  ],
+  "title": "CanonicalLaw",
+  "type": "object"
+}

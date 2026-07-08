@@ -1,0 +1,73 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": true,
+  "properties": {
+    "counts": {
+      "type": "object"
+    },
+    "edges": {
+      "items": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": true,
+        "properties": {
+          "confidence": {
+            "type": "number"
+          },
+          "evidence": {
+            "type": "object"
+          },
+          "from": {
+            "type": "string"
+          },
+            "relation": {
+              "type": "string"
+            },
+            "rule_id": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "source": {
+              "type": "string"
+            },
+          "to": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "from",
+          "to",
+          "relation",
+          "source",
+          "confidence",
+          "evidence"
+        ],
+        "title": "RelationEdge",
+        "type": "object"
+      },
+      "type": "array"
+    },
+    "nodes": {
+      "items": {
+        "type": "object"
+      },
+      "type": "array"
+    },
+    "schema_version": {
+      "type": "integer"
+    },
+    "updated_at": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "schema_version",
+    "updated_at",
+    "nodes",
+    "edges",
+    "counts"
+  ],
+  "title": "RelationGraph",
+  "type": "object"
+}

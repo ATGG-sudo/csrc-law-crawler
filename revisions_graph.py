@@ -5,8 +5,7 @@ from __future__ import annotations
 import hashlib
 from typing import Any
 
-from config import OUTPUT_DIR
-from storage import reg_file_path, utc_now_iso
+from storage import reg_file_path, relative_to_output, utc_now_iso
 
 
 class UnionFind:
@@ -53,7 +52,7 @@ def normalize_version_node(
     label = raw.get("evltDescrib") or name
     local_file: str | None = None
     if law_id and reg_file_path(str(law_id)).exists():
-        local_file = str(reg_file_path(str(law_id)).relative_to(OUTPUT_DIR))
+        local_file = relative_to_output(reg_file_path(str(law_id)))
     return {
         "id": law_id,
         "csrc_number": number,

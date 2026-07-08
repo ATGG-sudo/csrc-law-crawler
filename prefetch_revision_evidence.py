@@ -5,14 +5,17 @@ from __future__ import annotations
 
 import argparse
 import concurrent.futures
+import json
 import sys
 from typing import Any
 
 from api import fetch_change_law
 from client import HumanLikeClient
+from runtime import log_event
 from storage import (
     iter_reg_law_ids,
     revision_evidence_cache_path,
+    run_with_output_lock,
     save_json,
 )
 
@@ -76,11 +79,23 @@ def prefetch(
                 counts["fetched"] += 1
             except Exception as exc:
                 counts["failed"] += 1
-                print(f"  !! {law_id}: {exc}")
+                log_event(
+                    "revision_evidence_failed",
+                    level="ERROR",
+                    message=f"  !! {law_id}: {exc}",
+                    law_id=law_id,
+                    error_message=str(exc),
+                )
             if index % 100 == 0 or index == len(pending):
-                print(
-                    f"  evidence {index}/{len(pending)} "
-                    f"failed={counts['failed']}"
+                log_event(
+                    "revision_evidence_progress",
+                    message=(
+                        f"  evidence {index}/{len(pending)} "
+                        f"failed={counts['failed']}"
+                    ),
+                    index=index,
+                    total=len(pending),
+                    failed=counts["failed"],
                 )
     except BaseException:
         for future in futures:
@@ -111,11 +126,11 @@ def main() -> int:
     except KeyboardInterrupt:
         return 130
     except Exception as exc:
-        print(f"失败: {exc}", file=sys.stderr)
+        log_event("cli_error", level="ERROR", message=f"失败: {exc}", error_message=str(exc))
         return 1
-    print(result)
+    log_event("cli_result", message=json.dumps(result, ensure_ascii=False))
     return 0 if result["failed"] == 0 else 1
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    sys.exit(run_with_output_lock(main, "prefetch-revision-evidence"))

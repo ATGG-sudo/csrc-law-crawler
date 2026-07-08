@@ -5,106 +5,63 @@ from __future__ import annotations
 
 import argparse
 import sys
+from pathlib import Path
 from typing import Any
 
-from config import OUTPUT_DIR
+from relation_services import CanonicalRelationGraphBuilder
+from runtime import log_event
 from storage import (
     canonical_dir,
     cases_path,
+    catalog_dir,
     catalog_laws_dir,
     catalog_relations_path,
+    listed_output_files,
     load_json,
     related_laws_path,
+    relative_to_output,
     revisions_path,
+    run_with_output_lock,
     save_json,
     source_matches_path,
     utc_now_iso,
     writ_file_path,
 )
 
-CANONICAL_GRAPH = canonical_dir() / "relations" / "graph.json"
+def canonical_graph_path() -> Path:
+    return canonical_dir() / "relations" / "graph.json"
+
+
+def catalog_manifest_path() -> Path:
+    return catalog_dir() / "manifest.json"
 
 
 def build_canonical_relations() -> dict[str, Any]:
     source_map_doc = load_json(source_matches_path(), {})
     source_map: dict[str, str] = source_map_doc.get("by_source") or {}
-    nodes: dict[str, dict[str, Any]] = {}
-    edges: list[dict[str, Any]] = []
-    edge_keys: set[tuple[str, str, str, str]] = set()
 
-    for path in sorted(catalog_laws_dir().glob("law_*.json")):
+    def load_writ_node(writ_id: str) -> tuple[dict[str, Any], str | None]:
+        path = writ_file_path(writ_id)
+        writ = load_json(path, {}) if path.exists() else {}
+        return writ, relative_to_output(path) if path.exists() else None
+
+    builder = CanonicalRelationGraphBuilder(
+        source_map=source_map,
+        load_writ=load_writ_node,
+    )
+
+    catalog_files = listed_output_files(
+        catalog_manifest_path(),
+        field="file",
+        fallback_dir=catalog_laws_dir(),
+        pattern="law_*.json",
+    )
+    for path in catalog_files:
         entity = load_json(path, {})
         entity_id = str(entity.get("id") or path.stem)
-        nodes[entity_id] = {
-            "id": entity_id,
-            "type": "law",
-            "title": entity.get("title"),
-            "document_type": entity.get("document_type"),
-            "status": entity.get("status"),
-            "local_file": str(
-                (canonical_dir() / "json" / f"{entity_id}.json").relative_to(
-                    OUTPUT_DIR
-                )
-            ),
-        }
-
-    def law_node(system: str, record_id: Any, metadata: dict[str, Any] | None = None) -> str:
-        source_key = f"{system}:{record_id}"
-        canonical_id = source_map.get(source_key)
-        if canonical_id:
-            return canonical_id
-        stub_id = source_key
-        if stub_id not in nodes:
-            nodes[stub_id] = {
-                "id": stub_id,
-                "type": "law_stub",
-                "source_system": system,
-                "source_record_id": str(record_id),
-                "title": (metadata or {}).get("name"),
-                "version": (metadata or {}).get("version"),
-            }
-        return stub_id
-
-    def writ_node(writ_id: Any, case: dict[str, Any] | None = None) -> str:
-        node_id = f"writ:{writ_id}"
-        if node_id not in nodes:
-            path = writ_file_path(str(writ_id))
-            writ = load_json(path, {}) if path.exists() else {}
-            metadata = writ.get("metadata") or {}
-            nodes[node_id] = {
-                "id": node_id,
-                "type": "writ",
-                "title": metadata.get("name") or (case or {}).get("name"),
-                "writ_type": metadata.get("writ_type"),
-                "local_file": (
-                    str(path.relative_to(OUTPUT_DIR)) if path.exists() else None
-                ),
-            }
-        return node_id
-
-    def add_edge(
-        from_id: str,
-        to_id: str,
-        relation: str,
-        *,
-        source: str,
-        confidence: float,
-        evidence: dict[str, Any],
-        qualifier: str = "",
-    ) -> None:
-        key = (from_id, to_id, relation, qualifier)
-        if from_id == to_id or key in edge_keys:
-            return
-        edge_keys.add(key)
-        edges.append(
-            {
-                "from": from_id,
-                "to": to_id,
-                "relation": relation,
-                "source": source,
-                "confidence": confidence,
-                "evidence": evidence,
-            }
+        builder.add_catalog_entity(
+            entity,
+            local_file=relative_to_output(canonical_dir() / "json" / f"{entity_id}.json"),
         )
 
     revisions = load_json(revisions_path(), {})
@@ -115,9 +72,9 @@ def build_canonical_relations() -> dict[str, Any]:
         for edge in family.get("edges") or []:
             from_source = str(edge.get("from"))
             to_source = str(edge.get("to"))
-            add_edge(
-                law_node("neris", from_source, versions.get(from_source)),
-                law_node("neris", to_source, versions.get(to_source)),
+            builder.add_edge(
+                builder.law_node("neris", from_source, versions.get(from_source)),
+                builder.law_node("neris", to_source, versions.get(to_source)),
                 "supersedes",
                 source=str(edge.get("source") or "neris.changeLaw"),
                 confidence=float(edge.get("confidence") or 0.95),
@@ -130,7 +87,7 @@ def build_canonical_relations() -> dict[str, Any]:
 
     related = load_json(related_laws_path(), {}).get("items") or {}
     for source_id, items in related.items():
-        from_id = law_node("neris", source_id)
+        from_id = builder.law_node("neris", source_id)
         for item in items or []:
             raw = item.get("raw") or {}
             target_id = (
@@ -142,9 +99,9 @@ def build_canonical_relations() -> dict[str, Any]:
                 target_id = raw.get("putAndLawId")
             if not target_id:
                 continue
-            add_edge(
+            builder.add_edge(
                 from_id,
-                law_node(
+                builder.law_node(
                     "neris",
                     target_id,
                     {"name": item.get("name") or raw.get("putAndLawName")},
@@ -160,13 +117,13 @@ def build_canonical_relations() -> dict[str, Any]:
 
     cases = load_json(cases_path(), {}).get("by_law") or {}
     for law_id, record in cases.items():
-        from_id = law_node("neris", law_id)
+        from_id = builder.law_node("neris", law_id)
         for case in record.get("law_level") or []:
             writ_id = case.get("law_writ_id")
             if writ_id:
-                add_edge(
+                builder.add_edge(
                     from_id,
-                    writ_node(writ_id, case),
+                    builder.writ_node(writ_id, case),
                     "cited_by_case",
                     source="neris.relativeExample",
                     confidence=1.0,
@@ -177,9 +134,9 @@ def build_canonical_relations() -> dict[str, Any]:
             for case in entry_cases or []:
                 writ_id = case.get("law_writ_id")
                 if writ_id:
-                    add_edge(
+                    builder.add_edge(
                         from_id,
-                        writ_node(writ_id, case),
+                        builder.writ_node(writ_id, case),
                         "cited_by_case",
                         source="neris.relativeExample",
                         confidence=1.0,
@@ -191,9 +148,9 @@ def build_canonical_relations() -> dict[str, Any]:
     for relation in catalog_relations:
         from_id = str(relation.get("from") or "")
         to_id = str(relation.get("to") or "")
-        if from_id not in nodes or to_id not in nodes:
+        if from_id not in builder.nodes or to_id not in builder.nodes:
             continue
-        add_edge(
+        builder.add_edge(
             from_id,
             to_id,
             str(relation.get("relation") or "related_to"),
@@ -202,22 +159,8 @@ def build_canonical_relations() -> dict[str, Any]:
             evidence=relation.get("evidence") or {},
         )
 
-    relation_counts: dict[str, int] = {}
-    for edge in edges:
-        relation = str(edge["relation"])
-        relation_counts[relation] = relation_counts.get(relation, 0) + 1
-    graph = {
-        "schema_version": 1,
-        "updated_at": utc_now_iso(),
-        "nodes": list(nodes.values()),
-        "edges": edges,
-        "counts": {
-            "nodes": len(nodes),
-            "edges": len(edges),
-            "relations": dict(sorted(relation_counts.items())),
-        },
-    }
-    save_json(CANONICAL_GRAPH, graph)
+    graph = builder.as_graph(updated_at=utc_now_iso())
+    save_json(canonical_graph_path(), graph)
     return graph
 
 
@@ -227,11 +170,11 @@ def main() -> int:
     try:
         graph = build_canonical_relations()
     except Exception as exc:
-        print(f"失败: {exc}", file=sys.stderr)
+        log_event("cli_error", level="ERROR", message=f"失败: {exc}", error_message=str(exc))
         return 1
-    print(graph["counts"])
+    log_event("cli_result", message=str(graph["counts"]))
     return 0
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    sys.exit(run_with_output_lock(main, "build-canonical-relations"))

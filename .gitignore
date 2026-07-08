@@ -1,3 +1,6 @@
 .venv/
 __pycache__/
 *.pyc
+csrc_law_crawler.egg-info/
+csrc-output/
+csrc_crawler_config.json

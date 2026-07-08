@@ -1,0 +1,29 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": true,
+  "properties": {
+    "entries": {
+      "items": {
+        "type": "object"
+      },
+      "type": "array"
+    },
+    "entry_class_code": {},
+    "full_text": {
+      "type": "string"
+    },
+    "metadata": {
+      "type": "object"
+    },
+    "source": {
+      "type": "object"
+    }
+  },
+  "required": [
+    "metadata",
+    "entries",
+    "full_text"
+  ],
+  "title": "LawDocument",
+  "type": "object"
+}

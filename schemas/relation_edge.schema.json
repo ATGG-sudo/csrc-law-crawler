@@ -1,0 +1,40 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": true,
+  "properties": {
+    "confidence": {
+      "type": "number"
+    },
+    "evidence": {
+      "type": "object"
+    },
+    "from": {
+      "type": "string"
+    },
+    "relation": {
+      "type": "string"
+    },
+    "rule_id": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "source": {
+      "type": "string"
+    },
+    "to": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "from",
+    "to",
+    "relation",
+    "source",
+    "confidence",
+    "evidence"
+  ],
+  "title": "RelationEdge",
+  "type": "object"
+}

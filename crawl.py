@@ -6,27 +6,41 @@ from __future__ import annotations
 import argparse
 import sys
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 from client import HumanLikeClient
 from config import (
     LAW_TYPE_REGULATION,
     LAW_TYPE_WRIT,
-    OUTPUT_DIR,
     PAGE_SIZE,
 )
 from parser import build_law_document
 from neris_attachments import update_law_attachments
+from pipeline import (
+    STEP_COMPLETE,
+    STEP_INCOMPLETE,
+    PipelineHalted,
+    PipelineRunner,
+    PipelineStep,
+    StepResult,
+)
+from runtime import log_event
 from storage import (
     checkpoint_path,
     laws_dir,
     load_json,
     manifest_path,
+    output_dir,
+    relative_to_output,
+    reports_dir,
+    run_with_output_lock,
     save_json,
     utc_now_iso,
     writs_dir,
 )
 from writ_crawl import fetch_and_save_writ
+
+StepResultRun = Callable[[], StepResult]
 
 
 def fetch_list_page(
@@ -52,42 +66,126 @@ def law_file_path(law_id: str, law_type: int) -> Path:
     )
 
 
+def _write_step_results(results: list[StepResult]) -> None:
+    save_json(
+        reports_dir() / "crawl_step_results.json",
+        {
+            "schema_version": 1,
+            "updated_at": utc_now_iso(),
+            "status": (
+                STEP_COMPLETE
+                if all(item.status == STEP_COMPLETE for item in results)
+                else STEP_INCOMPLETE
+            ),
+            "items": [item.as_dict() for item in results],
+        },
+    )
+
+
+def _write_crawl_failures(stage: str, failures: list[dict[str, Any]]) -> str | None:
+    if not failures:
+        return None
+    path = reports_dir() / f"{stage}_failures.json"
+    save_json(
+        path,
+        {
+            "schema_version": 1,
+            "updated_at": utc_now_iso(),
+            "status": STEP_INCOMPLETE,
+            "stage": stage,
+            "failures": failures,
+        },
+    )
+    return relative_to_output(path)
+
+
 def crawl_type(
     client: HumanLikeClient,
     law_type: int,
     checkpoint: dict[str, Any],
     limit: int | None = None,
     fetch_attachments: bool = True,
-) -> None:
+) -> dict[str, Any]:
     type_key = "regulations" if law_type == LAW_TYPE_REGULATION else "writs"
     done_ids: set[str] = set(checkpoint.get("completed_ids", {}).get(type_key, []))
 
     label = "法规" if law_type == LAW_TYPE_REGULATION else "执法文书"
-    print(f"\n=== 开始抓取 {label} ===")
+    stage = f"crawl_{type_key}"
+    checkpoint.setdefault("crawl_status", {})[type_key] = {
+        "status": "in_progress",
+        "started_at": utc_now_iso(),
+    }
+    save_json(checkpoint_path(), checkpoint)
+    log_event("crawl_type_started", message=f"\n=== 开始抓取 {label} ===", type=type_key)
 
     first = fetch_list_page(client, 1, law_type)
     page_util = first["pageUtil"]
     row_count = page_util["rowCount"]
     total_pages = (row_count + PAGE_SIZE - 1) // PAGE_SIZE
-    print(f"  共 {row_count} 条，{total_pages} 页（已跳过 {len(done_ids)} 条）")
+    log_event(
+        "crawl_type_discovered",
+        message=f"  共 {row_count} 条，{total_pages} 页（已跳过 {len(done_ids)} 条）",
+        row_count=row_count,
+        total_pages=total_pages,
+        skipped_existing=len(done_ids),
+    )
 
     manifest = load_json(manifest_path(), {"updated_at": None, "items": []})
     manifest_index = {item["id"]: item for item in manifest.get("items", [])}
 
-    fetched = 0
+    seen = 0
+    written = 0
     skipped = 0
+    run_failures: list[dict[str, Any]] = []
+
+    def finish_counts() -> dict[str, Any]:
+        status = STEP_INCOMPLETE if run_failures else STEP_COMPLETE
+        crawl_status = checkpoint.setdefault("crawl_status", {}).setdefault(type_key, {})
+        crawl_status["status"] = status
+        crawl_status["seen"] = seen
+        crawl_status["written"] = written
+        crawl_status["skipped"] = skipped
+        crawl_status["failed"] = len(run_failures)
+        if run_failures:
+            crawl_status.pop("finished_at", None)
+        else:
+            crawl_status["finished_at"] = utc_now_iso()
+        checkpoint["updated_at"] = utc_now_iso()
+        save_json(checkpoint_path(), checkpoint)
+        failure_file = _write_crawl_failures(stage, run_failures)
+        return {
+            "schema_version": 1,
+            "status": status,
+            "seen": seen,
+            "written": written,
+            "skipped": skipped,
+            "failed": len(run_failures),
+            "source_total": row_count,
+            "source_pages": total_pages,
+            "output": relative_to_output(manifest_path()),
+            "failure_file": failure_file,
+        }
 
     for page in range(1, total_pages + 1):
         if page == 1:
             resp = first
         else:
-            print(f"  列表第 {page}/{total_pages} 页")
+            log_event(
+                "crawl_page_started",
+                message=f"  列表第 {page}/{total_pages} 页",
+                page=page,
+                total_pages=total_pages,
+            )
             resp = fetch_list_page(client, page, law_type)
 
         for summary in resp["pageUtil"].get("pageList") or []:
-            if limit is not None and fetched >= limit:
-                print(f"\n已达 --limit {limit}，停止。")
-                return
+            if limit is not None and seen >= limit:
+                log_event(
+                    "crawl_limit_reached",
+                    message=f"\n已达 --limit {limit}，停止。",
+                    limit=limit,
+                )
+                return finish_counts()
 
             law_id = summary.get("secFutrsLawId") or summary.get("lawWritId")
             if not law_id:
@@ -96,11 +194,17 @@ def crawl_type(
                 skipped += 1
                 continue
 
-            fetched += 1
-            idx = fetched
+            seen += 1
+            idx = seen
             total_hint = limit if limit is not None else "?"
             name = summary.get("secFutrsLawName") or summary.get("name") or law_id
-            print(f"[{idx}/{total_hint}] {name}")
+            log_event(
+                "crawl_record_started",
+                message=f"[{idx}/{total_hint}] {name}",
+                index=idx,
+                total_hint=total_hint,
+                record_name=name,
+            )
 
             out_path = law_file_path(law_id, law_type)
             try:
@@ -137,7 +241,7 @@ def crawl_type(
                     "type": type_key,
                     "name": name,
                     "fileno": summary.get("fileno"),
-                    "file": str(out_path.relative_to(OUTPUT_DIR)),
+                    "file": relative_to_output(out_path),
                     "crawled_at": utc_now_iso(),
                 }
 
@@ -153,20 +257,36 @@ def crawl_type(
                 )
                 manifest["updated_at"] = utc_now_iso()
                 save_json(manifest_path(), manifest)
+                written += 1
 
             except Exception as exc:
-                print(f"  !! 失败: {exc}")
-                checkpoint.setdefault("failures", []).append(
-                    {
-                        "id": law_id,
-                        "type": type_key,
-                        "error": str(exc),
-                        "at": utc_now_iso(),
-                    }
+                log_event(
+                    "crawl_record_failed",
+                    level="ERROR",
+                    message=f"  !! 失败: {exc}",
+                    record_id=law_id,
+                    record_type=type_key,
+                    error_message=str(exc),
                 )
+                failure = {
+                    "id": law_id,
+                    "type": type_key,
+                    "error": str(exc),
+                    "at": utc_now_iso(),
+                }
+                run_failures.append(failure)
+                checkpoint.setdefault("failures", []).append(failure)
                 save_json(checkpoint_path(), checkpoint)
 
-    print(f"  本轮新抓取 {fetched} 条，跳过 {skipped} 条")
+    log_event(
+        "crawl_type_finished",
+        message=f"  本轮写入 {written} 条，失败 {len(run_failures)} 条，跳过 {skipped} 条",
+        seen=seen,
+        written=written,
+        skipped=skipped,
+        failed=len(run_failures),
+    )
+    return finish_counts()
 
 
 def main() -> int:
@@ -188,9 +308,14 @@ def main() -> int:
         action="store_true",
         help="法规抓取时不查询 NERIS 独立附件列表",
     )
+    parser.add_argument(
+        "--allow-incomplete",
+        action="store_true",
+        help="允许某类抓取 incomplete/failed 后继续执行后续类型，并记录非 complete 状态",
+    )
     args = parser.parse_args()
 
-    OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+    output_dir().mkdir(parents=True, exist_ok=True)
     laws_dir().mkdir(parents=True, exist_ok=True)
     writs_dir().mkdir(parents=True, exist_ok=True)
 
@@ -203,25 +328,76 @@ def main() -> int:
     save_json(checkpoint_path(), checkpoint)
 
     client = HumanLikeClient()
-    print(f"输出目录: {OUTPUT_DIR}")
-    print(f"开始时间: {checkpoint['started_at']}")
+    log_event("cli_message", message=f"输出目录: {output_dir()}")
+    log_event("cli_message", message=f"开始时间: {checkpoint['started_at']}")
 
-    if args.types in ("regulation", "all"):
-        crawl_type(
+    steps: list[PipelineStep] = []
+
+    def add_step(name: str, run: StepResultRun) -> None:
+        steps.append(PipelineStep(name=name, run=run))
+
+    def crawl_step(
+        stage_name: str,
+        law_type: int,
+        *,
+        fetch_attachments: bool = True,
+    ) -> StepResult:
+        counts = crawl_type(
             client,
-            LAW_TYPE_REGULATION,
+            law_type,
             checkpoint,
             args.limit,
-            fetch_attachments=not args.skip_attachments,
+            fetch_attachments=fetch_attachments,
+        )
+        output_file = counts.get("output")
+        failure_file = counts.get("failure_file")
+        return StepResult.from_counts(
+            stage_name,
+            counts,
+            seen_key="seen",
+            written_key="written",
+            output_files=[str(output_file)] if output_file else [],
+            failure_file=str(failure_file) if failure_file else None,
+        )
+
+    if args.types in ("regulation", "all"):
+        add_step(
+            "crawl.regulations",
+            lambda: crawl_step(
+                "crawl.regulations",
+                LAW_TYPE_REGULATION,
+                fetch_attachments=not args.skip_attachments,
+            ),
         )
     if args.types in ("writ", "all"):
-        crawl_type(client, LAW_TYPE_WRIT, checkpoint, args.limit)
+        add_step(
+            "crawl.writs",
+            lambda: crawl_step("crawl.writs", LAW_TYPE_WRIT),
+        )
+
+    try:
+        run = PipelineRunner(
+            allow_incomplete=args.allow_incomplete,
+            on_update=_write_step_results,
+        ).run(steps)
+        log_event("pipeline_result", status=run.status, stages=len(run.items))
+    except KeyboardInterrupt:
+        return 130
+    except PipelineHalted as exc:
+        log_event(
+            "cli_error",
+            level="ERROR",
+            message=f"抓取失败: {exc}",
+            error_message=str(exc),
+            failed_stage=exc.result.stage,
+        )
+        return 1
 
     checkpoint["finished_at"] = utc_now_iso()
     save_json(checkpoint_path(), checkpoint)
-    print(f"\n完成。清单: {manifest_path()}")
+    log_event("cli_result", message=f"\n完成。清单: {manifest_path()}")
     return 0
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    sys.exit(run_with_output_lock(main, "crawl"))

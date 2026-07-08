@@ -7,13 +7,13 @@ import argparse
 import json
 import re
 import sys
-from pathlib import Path
 from typing import Any
 
-from config import OUTPUT_DIR
-from download_assets import ASSETS_MANIFEST
+from download_assets import assets_manifest_path
+from models import format_model_issues
 from normalize_laws import normalized_laws_dir, normalized_manifest_path
-from storage import laws_dir, load_json
+from runtime import log_event
+from storage import iter_reg_law_files, listed_output_files, load_json, output_path, run_with_context
 
 HTML_TAG_RE = re.compile(r"</?[A-Za-z][A-Za-z0-9:_-]*(?:\s[^<>]*)?>")
 
@@ -22,13 +22,25 @@ def _has_html_tag(text: str) -> bool:
     return bool(HTML_TAG_RE.search(text or ""))
 
 
+def _normalized_law_files():
+    return listed_output_files(
+        normalized_manifest_path(),
+        field="file",
+        fallback_dir=normalized_laws_dir(),
+        pattern="reg_*.json",
+    )
+
+
 def validate_normalized(*, sample: int = 5) -> tuple[list[str], dict[str, Any]]:
     issues: list[str] = []
-    raw_files = sorted(laws_dir().glob("reg_*.json"))
-    normalized_files = sorted(normalized_laws_dir().glob("reg_*.json"))
+    raw_files = iter_reg_law_files()
+    normalized_files = _normalized_law_files()
 
     if len(raw_files) != len(normalized_files):
         issues.append(f"normalized 文件数 {len(normalized_files)} != raw laws {len(raw_files)}")
+
+    for path in raw_files:
+        issues.extend(format_model_issues("law_document", path.name, load_json(path, {})))
 
     total_tables = 0
     total_assets = 0
@@ -57,11 +69,18 @@ def validate_normalized(*, sample: int = 5) -> tuple[list[str], dict[str, Any]]:
         total_tables += len(doc.get("tables") or [])
         total_assets += len(doc.get("assets") or [])
         for asset in doc.get("assets") or []:
+            issues.extend(
+                format_model_issues(
+                    "asset_record",
+                    f"{path.name}:{asset.get('asset_id') or 'asset'}",
+                    asset,
+                )
+            )
             status = asset.get("download_status")
             if status == "ok":
                 ok_assets += 1
                 local_file = asset.get("local_file")
-                if not local_file or not (OUTPUT_DIR / local_file).exists():
+                if not local_file or not output_path(local_file).exists():
                     missing_local_files.append((path.name, asset.get("asset_id") or ""))
             elif status == "failed":
                 failed_assets += 1
@@ -87,7 +106,7 @@ def validate_normalized(*, sample: int = 5) -> tuple[list[str], dict[str, Any]]:
             f"normalized manifest count={manifest.get('count')} != files={len(normalized_files)}"
         )
 
-    assets_manifest = load_json(ASSETS_MANIFEST, {})
+    assets_manifest = load_json(assets_manifest_path(), {})
     if (
         assets_manifest
         and assets_manifest.get("failed", 0) != embedded_failed_assets
@@ -130,15 +149,15 @@ def main() -> int:
     args = parser.parse_args()
 
     issues, summary = validate_normalized(sample=args.sample)
-    print(json.dumps(summary, ensure_ascii=False, indent=2))
+    log_event("validation_summary", message=json.dumps(summary, ensure_ascii=False, indent=2))
     if issues:
-        print("\n问题:")
+        log_event("validation_issues", level="ERROR", message="\n问题:")
         for issue in issues:
-            print(f"  - {issue}")
+            log_event("validation_issue", level="ERROR", message=f"  - {issue}", issue=issue)
         return 1
-    print("\nnormalized 校验通过")
+    log_event("validation_passed", message="\nnormalized 校验通过")
     return 0
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    sys.exit(run_with_context(main, "validate-normalized"))

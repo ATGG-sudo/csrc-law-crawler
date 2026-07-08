@@ -5,13 +5,49 @@ from __future__ import annotations
 
 import argparse
 import sys
+from typing import Callable
 
 from client import HumanLikeClient
-from config import OUTPUT_DIR
+from config import DELAY_MAX, DELAY_MIN
 from pass2_relations import run_pass2
 from pass3_cases import run_pass3
 from pass4_writs import run_pass4
-from storage import load_checkpoint, relations_dir, save_checkpoint, utc_now_iso
+from pipeline import (
+    STEP_COMPLETE,
+    PipelineHalted,
+    PipelineRunner,
+    PipelineStep,
+    StepResult,
+)
+from runtime import log_event
+from storage import (
+    load_checkpoint,
+    output_dir,
+    reports_dir,
+    relations_dir,
+    run_with_output_lock,
+    save_checkpoint,
+    save_json,
+    utc_now_iso,
+)
+
+StepResultRun = Callable[[], StepResult]
+
+
+def _write_step_results(results: list[StepResult]) -> None:
+    save_json(
+        reports_dir() / "enhance_step_results.json",
+        {
+            "schema_version": 1,
+            "updated_at": utc_now_iso(),
+            "status": (
+                STEP_COMPLETE
+                if all(item.status == STEP_COMPLETE for item in results)
+                else "incomplete"
+            ),
+            "items": [item.as_dict() for item in results],
+        },
+    )
 
 
 def main() -> int:
@@ -62,6 +98,11 @@ def main() -> int:
         action="store_true",
         help="pass4 强制重抓（含已有标题无正文的 writ）",
     )
+    parser.add_argument(
+        "--allow-incomplete",
+        action="store_true",
+        help="允许 pass incomplete/failed 后继续执行后续 pass，并记录非 complete 状态",
+    )
     args = parser.parse_args()
 
     selected = args.passes or ["all"]
@@ -70,49 +111,93 @@ def main() -> int:
     else:
         run_list = selected
 
-    OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+    output_dir().mkdir(parents=True, exist_ok=True)
     relations_dir().mkdir(parents=True, exist_ok=True)
 
     checkpoint = load_checkpoint()
     checkpoint.setdefault("enhance_started_at", utc_now_iso())
     save_checkpoint(checkpoint)
 
-    client_kwargs = {}
-    if args.delay_min is not None:
-        client_kwargs["delay_min"] = args.delay_min
-    if args.delay_max is not None:
-        client_kwargs["delay_max"] = args.delay_max
-    client = HumanLikeClient(**client_kwargs)
-    print(f"输出目录: {OUTPUT_DIR}")
+    delay_min = args.delay_min if args.delay_min is not None else DELAY_MIN
+    delay_max = args.delay_max if args.delay_max is not None else DELAY_MAX
+    client = HumanLikeClient(delay_min=delay_min, delay_max=delay_max)
+    log_event("cli_message", message=f"输出目录: {output_dir()}")
+
+    steps: list[PipelineStep] = []
+
+    def add_step(name: str, run: StepResultRun) -> None:
+        steps.append(PipelineStep(name=name, run=run))
 
     if "2" in run_list:
-        run_pass2(
-            client,
-            limit=args.limit,
-            rebuild=args.rebuild_relations,
-            fetch_related=not args.skip_related_laws,
-            refresh_revision_cache=args.refresh_revision_cache,
+        add_step(
+            "enhance.pass2_relations",
+            lambda: StepResult.from_counts(
+                "enhance.pass2_relations",
+                run_pass2(
+                    client,
+                    limit=args.limit,
+                    rebuild=args.rebuild_relations,
+                    fetch_related=not args.skip_related_laws,
+                    refresh_revision_cache=args.refresh_revision_cache,
+                ),
+                seen_key="laws",
+                written_key="families",
+            ),
         )
     if "3" in run_list:
-        run_pass3(
-            client,
-            limit=args.limit,
-            skip_law_level=args.skip_law_level_cases,
+        add_step(
+            "enhance.pass3_cases",
+            lambda: StepResult.from_counts(
+                "enhance.pass3_cases",
+                run_pass3(
+                    client,
+                    limit=args.limit,
+                    skip_law_level=args.skip_law_level_cases,
+                ),
+                seen_key="laws",
+                written_key="processed",
+            ),
         )
     if "4" in run_list:
-        run_pass4(
-            client,
-            all_writs=args.all_writs,
-            limit_pages=args.writ_pages,
-            force=args.force,
+        add_step(
+            "enhance.pass4_writs",
+            lambda: StepResult.from_counts(
+                "enhance.pass4_writs",
+                run_pass4(
+                    client,
+                    all_writs=args.all_writs,
+                    limit_pages=args.writ_pages,
+                    force=args.force,
+                ),
+                seen_key="targets",
+                written_key="saved",
+            ),
         )
+
+    try:
+        run = PipelineRunner(
+            allow_incomplete=args.allow_incomplete,
+            on_update=_write_step_results,
+        ).run(steps)
+        log_event("pipeline_result", status=run.status, stages=len(run.items))
+    except KeyboardInterrupt:
+        return 130
+    except PipelineHalted as exc:
+        log_event(
+            "cli_error",
+            level="ERROR",
+            message=f"增强抓取失败: {exc}",
+            error_message=str(exc),
+            failed_stage=exc.result.stage,
+        )
+        return 1
 
     checkpoint = load_checkpoint()
     checkpoint["enhance_finished_at"] = utc_now_iso()
     save_checkpoint(checkpoint)
-    print("\n增强抓取完成。")
+    log_event("cli_result", message="\n增强抓取完成。")
     return 0
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    sys.exit(run_with_output_lock(main, "enhance"))

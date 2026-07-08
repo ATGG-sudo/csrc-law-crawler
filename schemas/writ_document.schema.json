@@ -1,0 +1,41 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": true,
+  "properties": {
+    "body": {
+      "type": "string"
+    },
+    "legal_basis": {
+      "items": {
+        "type": "object"
+      },
+      "type": "array"
+    },
+    "list_summary": {
+      "type": [
+        "object",
+        "null"
+      ]
+    },
+    "metadata": {
+      "type": "object"
+    },
+    "parties": {
+      "items": {
+        "type": "object"
+      },
+      "type": "array"
+    },
+    "source": {
+      "type": "object"
+    }
+  },
+  "required": [
+    "metadata",
+    "body",
+    "legal_basis",
+    "parties"
+  ],
+  "title": "WritDocument",
+  "type": "object"
+}

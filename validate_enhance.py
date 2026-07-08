@@ -4,36 +4,38 @@
 from __future__ import annotations
 
 import argparse
-import json
 import random
 import sys
-from pathlib import Path
 from typing import Any
 
 from api import (
     fetch_change_law,
     fetch_count_law_writ,
-    fetch_relative_examples,
     fetch_relative_files,
     fetch_writ_list_page,
     paginate_relative_examples,
 )
 from client import HumanLikeClient
-from config import OUTPUT_DIR
 from revisions_graph import UnionFind, build_revisions_document, normalize_version_node
+from runtime import log_event
 from storage import (
     cases_path,
     load_checkpoint,
     load_json,
     load_reg_metadata,
-    related_laws_path,
+    output_dir,
     reg_file_path,
     revisions_path,
-    writs_dir,
+    run_with_context,
+    iter_writ_files,
     writ_file_path,
 )
 from writ_crawl import writ_has_body
 from writ_parser import parse_law_writ_info_html
+
+
+def _emit(message: str) -> None:
+    log_event("validation_message", message=message)
 
 
 def _expected_pass2(law_id: str, client: HumanLikeClient) -> dict[str, Any]:
@@ -121,7 +123,7 @@ def validate_pass2(client: HumanLikeClient, sample_size: int) -> list[str]:
     by_law_id = rev_doc.get("by_law_id") or {}
     families = rev_doc.get("families") or {}
     picks = done if len(done) <= sample_size else random.sample(done, sample_size)
-    print(f"\n=== Pass 2 抽样 {len(picks)} / {len(done)} 已完成 ===")
+    _emit(f"\n=== Pass 2 抽样 {len(picks)} / {len(done)} 已完成 ===")
 
     for law_id in picks:
         meta = load_reg_metadata(law_id) or {}
@@ -131,7 +133,7 @@ def validate_pass2(client: HumanLikeClient, sample_size: int) -> list[str]:
         path = reg_file_path(law_id)
         if not path.exists():
             issues.append(f"[pass2] {law_id} 本地无法规文件")
-            print(f"  FAIL {name}: 无 reg 文件")
+            _emit(f"  FAIL {name}: 无 reg 文件")
             continue
 
         family_id = by_law_id.get(str(law_id))
@@ -141,14 +143,14 @@ def validate_pass2(client: HumanLikeClient, sample_size: int) -> list[str]:
                 issues.append(
                     f"[pass2] {law_id} family_id={family_id} 但 revisions.json 无此族"
                 )
-                print(f"  FAIL {name}: by_law_id 无对应 family")
+                _emit(f"  FAIL {name}: by_law_id 无对应 family")
             elif str(law_id) not in {str(v.get("id")) for v in fam.get("versions", [])}:
                 issues.append(
                     f"[pass2] {law_id} 不在 family {family_id} 的 versions 中"
                 )
-                print(f"  FAIL {name}: 不在 versions 列表")
+                _emit(f"  FAIL {name}: 不在 versions 列表")
             else:
-                print(
+                _emit(
                     f"  OK   {name}: family={family_id}, "
                     f"evlt={len(exp['evlt_ids'])}, related={exp['related_count']}"
                 )
@@ -159,9 +161,9 @@ def validate_pass2(client: HumanLikeClient, sample_size: int) -> list[str]:
             )
             if pass_state.get("status") == "complete":
                 issues.append(f"[pass2] {message}")
-                print(f"  FAIL {message}")
+                _emit(f"  FAIL {message}")
             else:
-                print(
+                _emit(
                     f"  PEND {message}; API evlt={len(exp['evlt_ids'])}, "
                     f"related={exp['related_count']}"
                 )
@@ -171,7 +173,7 @@ def validate_pass2(client: HumanLikeClient, sample_size: int) -> list[str]:
                 eid for eid in exp["evlt_ids"] if not reg_file_path(eid).exists()
             ]
             if missing_local:
-                print(
+                _emit(
                     f"       提示: evltList 中 {len(missing_local)}/{len(exp['evlt_ids'])} "
                     f"版本尚未下载到 raw/neris/laws/"
                 )
@@ -186,14 +188,14 @@ def validate_pass2(client: HumanLikeClient, sample_size: int) -> list[str]:
         lid = multi_candidates[0]
         sim = _simulate_pass2_family([lid], client)
         fams = sim.get("families") or {}
-        print(f"\n  多版本样本 {lid[:8]}… → {len(fams)} 个 family, "
+        _emit(f"\n  多版本样本 {lid[:8]}… → {len(fams)} 个 family, "
               f"versions={[len(f.get('versions',[])) for f in fams.values()]}, "
               f"edges={[len(f.get('edges',[])) for f in fams.values()]}")
         for fk, fam in fams.items():
             vers = fam.get("versions") or []
             if len(vers) >= 2:
                 v0, v1 = vers[0].get("version"), vers[1].get("version")
-                print(f"       family {fk}: 新版 {v0} supersedes 旧版 {v1}（按 version 数字降序）")
+                _emit(f"       family {fk}: 新版 {v0} supersedes 旧版 {v1}（按 version 数字降序）")
 
     n_fam = len(rev_doc.get("families") or {})
     if len(done) > 10 and n_fam < len(done) // 10:
@@ -213,7 +215,7 @@ def validate_pass3(client: HumanLikeClient, sample_size: int) -> list[str]:
         return ["Pass 3 尚无 completed_ids，跳过"]
 
     picks = done if len(done) <= sample_size else random.sample(done, sample_size)
-    print(f"\n=== Pass 3 抽样 {len(picks)} / {len(done)} 已完成 ===")
+    _emit(f"\n=== Pass 3 抽样 {len(picks)} / {len(done)} 已完成 ===")
 
     for law_id in picks:
         meta = load_reg_metadata(law_id) or {}
@@ -221,7 +223,7 @@ def validate_pass3(client: HumanLikeClient, sample_size: int) -> list[str]:
         local = (cases_doc.get("by_law") or {}).get(law_id)
         if not local:
             issues.append(f"[pass3] {law_id} 在 cases.json 无记录")
-            print(f"  FAIL {name}: cases.json 缺失")
+            _emit(f"  FAIL {name}: cases.json 缺失")
             continue
 
         count_resp = fetch_count_law_writ(client, law_id)
@@ -236,9 +238,9 @@ def validate_pass3(client: HumanLikeClient, sample_size: int) -> list[str]:
             issues.append(
                 f"[pass3] {law_id} entry_counts 不一致 API={api_entry_counts} local={local_counts}"
             )
-            print(f"  FAIL {name}: entry_counts 不一致")
+            _emit(f"  FAIL {name}: entry_counts 不一致")
         else:
-            print(f"  OK   {name}: entry_counts={len(local_counts)}")
+            _emit(f"  OK   {name}: entry_counts={len(local_counts)}")
 
         api_law_cases = paginate_relative_examples(
             client, law_id=law_id, relative_type="law"
@@ -251,9 +253,9 @@ def validate_pass3(client: HumanLikeClient, sample_size: int) -> list[str]:
             issues.append(
                 f"[pass3] {law_id} law_level writ_ids API={len(api_ids)} local={len(local_ids)}"
             )
-            print(f"  FAIL {name}: law_level 案例数 API={len(api_ids)} local={len(local_ids)}")
+            _emit(f"  FAIL {name}: law_level 案例数 API={len(api_ids)} local={len(local_ids)}")
         elif api_ids:
-            print(f"       law_level 案例 {len(api_ids)} 条一致")
+            _emit(f"       law_level 案例 {len(api_ids)} 条一致")
 
         for entry_id, cnt in list(api_entry_counts.items())[:2]:
             api_cases = paginate_relative_examples(
@@ -268,9 +270,9 @@ def validate_pass3(client: HumanLikeClient, sample_size: int) -> list[str]:
                 issues.append(
                     f"[pass3] {law_id} entry={entry_id} 案例不一致 API={len(api_eids)} local={len(local_eids)}"
                 )
-                print(f"  FAIL {name} entry {entry_id[:8]}…: 案例不一致")
+                _emit(f"  FAIL {name} entry {entry_id[:8]}…: 案例不一致")
             else:
-                print(f"       entry {entry_id[:8]}… 案例 {len(api_eids)} 条一致")
+                _emit(f"       entry {entry_id[:8]}… 案例 {len(api_eids)} 条一致")
 
     writ_ids = set(cases_doc.get("writ_ids") or [])
     all_case_ids: set[str] = set()
@@ -293,9 +295,9 @@ def validate_pass4(client: HumanLikeClient, sample_size: int) -> list[str]:
     issues: list[str] = []
     cp = load_checkpoint()
     done = list(cp.get("pass4", {}).get("completed_writ_ids") or [])
-    print(f"\n=== Pass 4 本地 writ 文件校验（checkpoint 完成 {len(done)}）===")
+    _emit(f"\n=== Pass 4 本地 writ 文件校验（checkpoint 完成 {len(done)}）===")
 
-    writ_files = list(writs_dir().glob("writ_*.json"))
+    writ_files = iter_writ_files()
     no_body = []
     no_basis = []
     for wf in writ_files:
@@ -305,7 +307,7 @@ def validate_pass4(client: HumanLikeClient, sample_size: int) -> list[str]:
         if not doc.get("legal_basis"):
             no_basis.append(wf.name)
 
-    print(f"  writ 文件 {len(writ_files)} 个; 无正文 {len(no_body)}; 无 legal_basis {len(no_basis)}")
+    _emit(f"  writ 文件 {len(writ_files)} 个; 无正文 {len(no_body)}; 无 legal_basis {len(no_basis)}")
     if no_body:
         issues.append(f"[pass4] {len(no_body)} 个 writ 无正文: {no_body[:5]}")
 
@@ -327,25 +329,25 @@ def validate_pass4(client: HumanLikeClient, sample_size: int) -> list[str]:
         api_body = (parsed.get("body") or "").strip()
         if not api_body:
             issues.append(f"[pass4] {writ_id} 官网详情页无正文")
-            print(f"  FAIL writ_{writ_id[:8]}…: 官网无正文")
+            _emit(f"  FAIL writ_{writ_id[:8]}…: 官网无正文")
             continue
         if abs(len(local_body) - len(api_body)) > 5:
             issues.append(
                 f"[pass4] {writ_id} 正文字数 local={len(local_body)} api={len(api_body)}"
             )
-            print(f"  FAIL writ_{writ_id[:8]}…: 字数 {len(local_body)} vs {len(api_body)}")
+            _emit(f"  FAIL writ_{writ_id[:8]}…: 字数 {len(local_body)} vs {len(api_body)}")
         else:
             lb = len(doc.get("legal_basis") or [])
             pb = len(parsed.get("legal_basis") or [])
-            print(f"  OK   writ_{writ_id[:8]}…: body={len(local_body)}, basis local={lb} api={pb}")
+            _emit(f"  OK   writ_{writ_id[:8]}…: body={len(local_body)}, basis local={lb} api={pb}")
 
     # 列表总数对照
     try:
         first = fetch_writ_list_page(client, 1)
         row_count = first["pageUtil"]["rowCount"]
-        print(f"  官网文书列表 rowCount={row_count}, 本地文件={len(writ_files)}")
+        _emit(f"  官网文书列表 rowCount={row_count}, 本地文件={len(writ_files)}")
     except Exception as exc:
-        print(f"  列表总数对照失败: {exc}")
+        _emit(f"  列表总数对照失败: {exc}")
     return issues
 
 
@@ -359,10 +361,10 @@ def main() -> int:
         selected = ["2", "3", "4"]
 
     cp = load_checkpoint()
-    print(f"输出: {OUTPUT_DIR}")
-    print(f"pass2 进度: {len(cp.get('pass2',{}).get('completed_ids',[]))}/3422")
-    print(f"pass3 进度: {len(cp.get('pass3',{}).get('completed_ids',[]))}/3422")
-    print(f"pass4 进度: {len(cp.get('pass4',{}).get('completed_writ_ids',[]))}")
+    _emit(f"输出: {output_dir()}")
+    _emit(f"pass2 进度: {len(cp.get('pass2',{}).get('completed_ids',[]))}/3422")
+    _emit(f"pass3 进度: {len(cp.get('pass3',{}).get('completed_ids',[]))}/3422")
+    _emit(f"pass4 进度: {len(cp.get('pass4',{}).get('completed_writ_ids',[]))}")
 
     client = HumanLikeClient()
     all_issues: list[str] = []
@@ -373,15 +375,15 @@ def main() -> int:
     if "4" in selected:
         all_issues.extend(validate_pass4(client, args.sample))
 
-    print("\n=== 汇总 ===")
+    _emit("\n=== 汇总 ===")
     if all_issues:
         for item in all_issues:
-            print(f"  - {item}")
-        print(f"\n共 {len(all_issues)} 条提示/问题")
+            _emit(f"  - {item}")
+        _emit(f"\n共 {len(all_issues)} 条提示/问题")
     else:
-        print("  抽样校验未发现不一致")
+        _emit("  抽样校验未发现不一致")
     return 1 if any(not x.endswith("跳过") for x in all_issues if x.startswith("[pass")) else 0
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    sys.exit(run_with_context(main, "validate-enhance"))

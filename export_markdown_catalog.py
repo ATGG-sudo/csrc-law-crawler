@@ -9,30 +9,35 @@ import sys
 from pathlib import Path
 from typing import Any
 
-from config import OUTPUT_DIR
-from export_markdown_laws import (
-    _assets_section,
-    _clean_table_value,
-    _filename_stem,
-    _relative_markdown_link,
-    _replace_asset_links,
-    _strip_leading_title,
-    _yaml_scalar,
+from markdown_utils import (
+    assets_section,
+    clean_table_value,
+    filename_stem,
+    relative_markdown_link,
+    replace_asset_links,
+    strip_leading_title,
+    yaml_scalar,
 )
+from normalize_catalog import catalog_normalized_manifest_path
+from runtime import log_event
 from storage import (
     catalog_dir,
     catalog_markdown_dir,
     catalog_normalized_dir,
+    listed_output_files,
     load_json,
+    relative_to_output,
+    run_with_output_lock,
     save_json,
     utc_now_iso,
 )
 
-CATALOG_MARKDOWN_CURRENT_DIR = catalog_markdown_dir() / "current"
-CATALOG_MARKDOWN_UNKNOWN_DIR = catalog_markdown_dir() / "unknown"
-CATALOG_MARKDOWN_HISTORICAL_DIR = catalog_markdown_dir() / "historical"
-CATALOG_MARKDOWN_REFERENCE_DIR = catalog_markdown_dir() / "reference"
-CATALOG_MARKDOWN_MANIFEST = catalog_dir() / "markdown_manifest.json"
+def catalog_markdown_bucket_dir(bucket: str) -> Path:
+    return catalog_markdown_dir() / bucket
+
+
+def catalog_markdown_manifest_path() -> Path:
+    return catalog_dir() / "markdown_manifest.json"
 
 
 def bucket_for_document(doc: dict[str, Any]) -> str:
@@ -50,13 +55,8 @@ def _target_path(
     used_paths: set[Path],
 ) -> Path:
     metadata = doc.get("metadata") or {}
-    target_dir = {
-        "current": CATALOG_MARKDOWN_CURRENT_DIR,
-        "unknown": CATALOG_MARKDOWN_UNKNOWN_DIR,
-        "historical": CATALOG_MARKDOWN_HISTORICAL_DIR,
-        "reference": CATALOG_MARKDOWN_REFERENCE_DIR,
-    }[bucket_for_document(doc)]
-    stem = _filename_stem(metadata, entity_id)
+    target_dir = catalog_markdown_bucket_dir(bucket_for_document(doc))
+    stem = filename_stem(metadata, entity_id)
     candidate = target_dir / f"{stem}.md"
     if candidate not in used_paths:
         used_paths.add(candidate)
@@ -93,10 +93,10 @@ def _front_matter(doc: dict[str, Any]) -> str:
         "source_file": doc.get("source_file"),
     }
     lines = ["---"]
-    lines.extend(f"{key}: {_yaml_scalar(value)}" for key, value in values.items())
+    lines.extend(f"{key}: {yaml_scalar(value)}" for key, value in values.items())
     revision_ref = doc.get("revision_ref") or {}
     if revision_ref:
-        lines.append(f"revision_ref: {_yaml_scalar(revision_ref.get('family_id'))}")
+        lines.append(f"revision_ref: {yaml_scalar(revision_ref.get('family_id'))}")
     lines.append("---")
     return "\n".join(lines)
 
@@ -119,7 +119,7 @@ def _metadata_table(doc: dict[str, Any]) -> str:
     ]
     lines = ["| 字段 | 值 |", "| --- | --- |"]
     lines.extend(
-        f"| {_clean_table_value(key)} | {_clean_table_value(value)} |"
+        f"| {clean_table_value(key)} | {clean_table_value(value)} |"
         for key, value in rows
     )
     return "\n".join(lines)
@@ -136,7 +136,7 @@ def _sources_section(doc: dict[str, Any], markdown_path: Path) -> str:
         "| --- | --- | --- | --- |",
     ]
     for source in sources:
-        local_link = _relative_markdown_link(markdown_path, source.get("local_file"))
+        local_link = relative_markdown_link(markdown_path, source.get("local_file"))
         page_url = source.get("page_url")
         links = []
         if page_url:
@@ -147,9 +147,9 @@ def _sources_section(doc: dict[str, Any], markdown_path: Path) -> str:
             "| "
             + " | ".join(
                 [
-                    _clean_table_value(source.get("system")),
-                    _clean_table_value(source.get("role")),
-                    _clean_table_value(source.get("record_id")),
+                    clean_table_value(source.get("system")),
+                    clean_table_value(source.get("role")),
+                    clean_table_value(source.get("record_id")),
                     " / ".join(links),
                 ]
             )
@@ -165,13 +165,13 @@ def build_catalog_markdown(doc: dict[str, Any], markdown_path: Path) -> str:
         asset_id = str(asset.get("asset_id") or "")
         if not asset_id:
             continue
-        local_link = _relative_markdown_link(markdown_path, asset.get("local_file"))
+        local_link = relative_markdown_link(markdown_path, asset.get("local_file"))
         assets[asset_id] = {
             **asset,
             "markdown_link": local_link or asset.get("source_url") or f"asset:{asset_id}",
         }
-    body = _strip_leading_title(str(doc.get("full_text_markdown") or ""), title)
-    body = _replace_asset_links(body, assets)
+    body = strip_leading_title(str(doc.get("full_text_markdown") or ""), title)
+    body = replace_asset_links(body, assets)
     parts = [_front_matter(doc), f"# {title}", _metadata_table(doc)]
     if body:
         parts.append(body)
@@ -182,7 +182,7 @@ def build_catalog_markdown(doc: dict[str, Any], markdown_path: Path) -> str:
     sources = _sources_section(doc, markdown_path)
     if sources:
         parts.append(sources)
-    asset_section = _assets_section(assets)
+    asset_section = assets_section(assets)
     if asset_section:
         parts.append(asset_section)
     return "\n\n".join(parts).rstrip() + "\n"
@@ -194,19 +194,21 @@ def export_catalog_markdown(
     force: bool = False,
     clean: bool = False,
 ) -> dict[str, Any]:
-    normalized_files = sorted(catalog_normalized_dir().glob("law_*.json"))
-    if limit is not None:
-        normalized_files = normalized_files[:limit]
+    normalized_files = listed_output_files(
+        catalog_normalized_manifest_path(),
+        field="file",
+        fallback_dir=catalog_normalized_dir(),
+        pattern="law_*.json",
+        limit=limit,
+    )
     if not normalized_files:
         raise FileNotFoundError(
             "canonical/json 不存在，请先运行 python normalize_catalog.py"
         )
     if clean and catalog_markdown_dir().exists():
         shutil.rmtree(catalog_markdown_dir())
-    CATALOG_MARKDOWN_CURRENT_DIR.mkdir(parents=True, exist_ok=True)
-    CATALOG_MARKDOWN_UNKNOWN_DIR.mkdir(parents=True, exist_ok=True)
-    CATALOG_MARKDOWN_HISTORICAL_DIR.mkdir(parents=True, exist_ok=True)
-    CATALOG_MARKDOWN_REFERENCE_DIR.mkdir(parents=True, exist_ok=True)
+    for bucket in ("current", "unknown", "historical", "reference"):
+        catalog_markdown_bucket_dir(bucket).mkdir(parents=True, exist_ok=True)
 
     used_paths: set[Path] = set()
     items: list[dict[str, Any]] = []
@@ -221,7 +223,6 @@ def export_catalog_markdown(
     for index, path in enumerate(normalized_files, start=1):
         doc = load_json(path, {})
         entity_id = str(doc.get("id") or path.stem)
-        metadata = doc.get("metadata") or {}
         out_path = _target_path(doc, entity_id, used_paths)
         bucket = bucket_for_document(doc)
         bucket_counts[bucket] += 1
@@ -241,19 +242,24 @@ def export_catalog_markdown(
                 "effectiveness": (doc.get("effectiveness") or {}).get("status"),
                 "effectiveness_basis": (doc.get("effectiveness") or {}).get("basis"),
                 "bucket": bucket,
-                "source_file": str(path.relative_to(OUTPUT_DIR)),
-                "file": str(out_path.relative_to(OUTPUT_DIR)),
+                "source_file": relative_to_output(path),
+                "file": relative_to_output(out_path),
                 "text_length": len(str(doc.get("full_text_plain") or "")),
             }
         )
         if index % 100 == 0 or index == len(normalized_files):
-            print(f"  exported catalog {index}/{len(normalized_files)}")
+            log_event(
+                "export_progress",
+                message=f"  exported catalog {index}/{len(normalized_files)}",
+                index=index,
+                total=len(normalized_files),
+            )
 
     manifest = {
         "schema_version": 1,
         "updated_at": utc_now_iso(),
-        "source_dir": str(catalog_normalized_dir().relative_to(OUTPUT_DIR)),
-        "markdown_dir": str(catalog_markdown_dir().relative_to(OUTPUT_DIR)),
+        "source_dir": relative_to_output(catalog_normalized_dir()),
+        "markdown_dir": relative_to_output(catalog_markdown_dir()),
         "count": len(items),
         "bucket_counts": bucket_counts,
         "written": written,
@@ -261,7 +267,7 @@ def export_catalog_markdown(
         "filename_pattern": "title - fileno - effective_date.md",
         "items": items,
     }
-    save_json(CATALOG_MARKDOWN_MANIFEST, manifest)
+    save_json(catalog_markdown_manifest_path(), manifest)
     return manifest
 
 
@@ -280,15 +286,18 @@ def main() -> int:
     except KeyboardInterrupt:
         return 130
     except Exception as exc:
-        print(f"失败: {exc}", file=sys.stderr)
+        log_event("cli_error", level="ERROR", message=f"失败: {exc}", error_message=str(exc))
         return 1
-    print(
-        f"完成: count={manifest['count']} written={manifest['written']} "
-        f"skipped={manifest['skipped']} buckets={manifest['bucket_counts']} "
-        f"-> {CATALOG_MARKDOWN_MANIFEST}"
+    log_event(
+        "cli_result",
+        message=(
+            f"完成: count={manifest['count']} written={manifest['written']} "
+            f"skipped={manifest['skipped']} buckets={manifest['bucket_counts']} "
+            f"-> {catalog_markdown_manifest_path()}"
+        ),
     )
     return 0
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    sys.exit(run_with_output_lock(main, "export-markdown-catalog"))

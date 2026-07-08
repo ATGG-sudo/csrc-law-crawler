@@ -19,11 +19,25 @@ import urllib3
 from bs4 import BeautifulSoup, Tag
 
 from asset_text import extract_asset_text_bytes
-from config import AMAC_BASE_URL, AMAC_RULES_BASE_URL, OUTPUT_DIR, USER_AGENT
+from catalog_rules import RULE_WORDS, classify_amac_document
+from config import (
+    AMAC_BASE_URL,
+    AMAC_RULES_BASE_URL,
+    AMAC_VERIFY_TLS,
+    MAX_RETRIES,
+    RETRY_BACKOFF_BASE,
+    USER_AGENT,
+)
+from download_utils import DownloadedBytes, RetryableContentError, read_binary_response
+from failure_taxonomy import FailureReason
+from http_policy import HTTPPolicy
+from runtime import log_event, log_metric
 from storage import (
     amac_sources_dir,
     load_json,
     raw_dir,
+    relative_to_output,
+    run_with_output_lock,
     save_json,
     utc_now_iso,
 )
@@ -36,8 +50,6 @@ SITE_SEARCH_URL = urljoin(
     AMAC_BASE_URL,
     "portal/ESSearch/doc/findDocsByKeyword",
 )
-AMAC_ASSETS_ROOT = raw_dir() / "assets" / "amac"
-AMAC_MANIFEST = raw_dir() / "amac" / "manifest.json"
 DEFAULT_XWFB_PAGES = 12
 DEFAULT_XWFB_SECTIONS = [
     ("通知公告", "xwfb/tzgg/"),
@@ -83,6 +95,14 @@ ASSET_SUFFIXES = {
     ".wps",
 }
 
+
+def amac_assets_root() -> Path:
+    return raw_dir() / "assets" / "amac"
+
+
+def amac_manifest_path() -> Path:
+    return raw_dir() / "amac" / "manifest.json"
+
 TITLE_PREFIX_RE = re.compile(r"^附件(?:\s*\d+(?:-\d+)?)?\s*[：:、.\-]?\s*")
 DATE_SUFFIX_RE = re.compile(r"\s+\d{2}-\d{2}$")
 FILENO_RE = re.compile(
@@ -90,7 +110,6 @@ FILENO_RE = re.compile(
 )
 XWFB_PAGE_COUNT_RE = re.compile(r"createPageHTML\((\d+),")
 XWFB_ARTICLE_DATE_RE = re.compile(r"t(\d{4})(\d{2})(\d{2})_\d+\.html")
-RULE_WORDS = ("办法", "规则", "指引", "准则", "细则", "规定", "指南", "规范", "标准", "模板")
 RULE_NOTICE_ACTION_WORDS = ("发布", "印发", "修订", "公开征求意见", "征求意见")
 NON_RULE_NOTICE_WORDS = ("培训", "解读", "举办", "报名时间", "培训时间", "课程", "会议")
 
@@ -119,43 +138,191 @@ def _clean_attachment_title(value: str) -> str:
 
 
 def classify_document(title: str, url: str) -> str:
-    if title.startswith("关于发布") or title.endswith(("公告", "通知")):
-        return "publication_notice"
-    if "登记备案动态" in title or "/dbdt/" in url:
-        return "regulatory_practice"
-    if any(word in title for word in RULE_WORDS):
-        return "self_regulatory_rule"
-    return "supporting_material"
+    return classify_amac_document(title, url)[0]
+
+
+def _classified_document_metadata(title: str, url: str) -> dict[str, str]:
+    document_type, rule = classify_amac_document(title, url)
+    return {
+        "document_type": document_type,
+        "document_type_rule_id": rule.rule_id,
+    }
 
 
 class AmacClient:
-    def __init__(self, *, delay_min: float = 0.25, delay_max: float = 0.7) -> None:
-        self.session = requests.Session()
-        self.session.headers.update(
-            {
+    source_name = "amac"
+
+    def __init__(
+        self,
+        *,
+        delay_min: float = 0.25,
+        delay_max: float = 0.7,
+        verify_tls: bool = AMAC_VERIFY_TLS,
+    ) -> None:
+        self.policy = HTTPPolicy(
+            source_name=self.source_name,
+            base_url=AMAC_BASE_URL,
+            headers={
                 "User-Agent": USER_AGENT,
                 "Accept-Language": "zh-CN,zh;q=0.9",
                 "Referer": AMAC_BASE_URL,
-            }
+            },
+            verify_tls=verify_tls,
+            blocked_markers=("WAF", "请求已中断", "502 Bad Gateway", "504 Gateway"),
         )
+        self.session = requests.Session()
+        self.session.headers.update(self.policy.headers)
         self.delay_min = delay_min
         self.delay_max = delay_max
+        self.verify_tls = verify_tls
 
     def _pause(self) -> None:
         if self.delay_max > 0:
             time.sleep(random.uniform(self.delay_min, self.delay_max))
 
+    def _is_blocked(self, response: requests.Response, *, inspect_body: bool) -> bool:
+        status = int(getattr(response, "status_code", 0) or 0)
+        if status >= 500:
+            return True
+        if not inspect_body:
+            return False
+        text = str(getattr(response, "text", ""))[:500]
+        return any(marker in text for marker in self.policy.blocked_markers)
+
+    def _record_response(self, method: str, url: str, response: requests.Response) -> None:
+        status = getattr(response, "status_code", None)
+        log_metric(
+            "http_requests_total",
+            source=self.source_name,
+            method=method,
+            status=status,
+        )
+        log_event(
+            "http_request",
+            source=self.source_name,
+            method=method,
+            url=url,
+            status=status,
+            verify_tls=self.verify_tls,
+        )
+
+    def _record_retry(
+        self,
+        *,
+        url: str,
+        attempt: int,
+        wait: float,
+        reason: FailureReason,
+        exc: BaseException | None = None,
+    ) -> None:
+        fields: dict[str, Any] = {}
+        summary = "拦截/超时" if exc is None else f"错误 {exc!r}"
+        if exc is not None:
+            fields["error_type"] = type(exc).__name__
+            fields["error_message"] = str(exc)
+        log_event(
+            "http_retry",
+            level="WARNING",
+            message=f"  [{summary}，{wait:.1f}s 后重试 {attempt}/{MAX_RETRIES}]",
+            url=url,
+            attempt=attempt,
+            max_retries=MAX_RETRIES,
+            wait_seconds=round(wait, 3),
+            reason=reason,
+            **fields,
+        )
+        log_metric("http_retries_total", source=self.source_name, reason=reason)
+
     def get(self, url: str, **kwargs: Any) -> requests.Response:
-        self._pause()
-        verify = not urlsplit(url).netloc.lower().startswith("fg.amac.org.cn")
-        if not verify:
+        last_error: Exception | None = None
+        stream = bool(kwargs.get("stream"))
+        if not self.verify_tls:
             urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
-        response = self.session.get(url, timeout=60, verify=verify, **kwargs)
-        response.raise_for_status()
-        return response
+
+        for attempt in range(1, MAX_RETRIES + 1):
+            self._pause()
+            try:
+                response = self.session.get(
+                    url,
+                    timeout=self.policy.timeout_seconds,
+                    verify=self.verify_tls,
+                    **kwargs,
+                )
+                self._record_response("GET", url, response)
+                if self._is_blocked(response, inspect_body=not stream):
+                    wait = RETRY_BACKOFF_BASE * attempt + random.uniform(1, 4)
+                    self._record_retry(
+                        url=url,
+                        attempt=attempt,
+                        wait=wait,
+                        reason=FailureReason.NETWORK_BLOCKED,
+                    )
+                    time.sleep(wait)
+                    continue
+                response.raise_for_status()
+                return response
+            except requests.HTTPError as exc:
+                last_error = exc
+                wait = RETRY_BACKOFF_BASE * attempt + random.uniform(1, 4)
+                self._record_retry(
+                    url=url,
+                    attempt=attempt,
+                    wait=wait,
+                    reason=FailureReason.HTTP_STATUS_ERROR,
+                    exc=exc,
+                )
+                time.sleep(wait)
+            except requests.RequestException as exc:
+                last_error = exc
+                wait = RETRY_BACKOFF_BASE * attempt + random.uniform(1, 4)
+                self._record_retry(
+                    url=url,
+                    attempt=attempt,
+                    wait=wait,
+                    reason=FailureReason.NETWORK_REQUEST_EXCEPTION,
+                    exc=exc,
+                )
+                time.sleep(wait)
+
+        raise RuntimeError(f"请求失败: {url}") from last_error
 
     def get_json(self, url: str, params: dict[str, Any]) -> dict[str, Any]:
         return self.get(url, params=params).json()
+
+    def get_binary_payload(
+        self,
+        url: str,
+        *,
+        headers: dict[str, str] | None = None,
+    ) -> DownloadedBytes:
+        last_error: Exception | None = None
+        for attempt in range(1, MAX_RETRIES + 1):
+            response = self.get(
+                url,
+                headers=headers or {"Accept": "*/*", "Referer": url},
+                stream=True,
+            )
+            try:
+                payload = read_binary_response(response)
+                log_metric(
+                    "download_bytes_total",
+                    source=self.source_name,
+                    amount=payload.size_bytes,
+                )
+                return payload
+            except RetryableContentError as exc:
+                last_error = exc
+                wait = RETRY_BACKOFF_BASE * attempt + random.uniform(1, 4)
+                self._record_retry(
+                    url=url,
+                    attempt=attempt,
+                    wait=wait,
+                    reason=exc.reason,
+                    exc=exc,
+                )
+                time.sleep(wait)
+
+        raise RuntimeError(f"请求失败: {url}") from last_error
 
 
 def discover_policy_candidates(
@@ -428,7 +595,7 @@ def _metadata_from_page(
         "effective_date": fields.get("实施日期") or None,
         "ineffective_date": fields.get("失效日期") or None,
         "status": status if status else "unknown",
-        "document_type": classify_document(title, str(candidate.get("url") or "")),
+        **_classified_document_metadata(title, str(candidate.get("url") or "")),
     }
 
 
@@ -442,12 +609,12 @@ def _download_asset(
     url: str,
     label: str,
 ) -> dict[str, Any]:
-    response = client.get(url, headers={"Accept": "*/*", "Referer": url})
-    data = response.content
+    payload = client.get_binary_payload(url)
+    data = payload.data
     suffix = Path(urlsplit(url).path).suffix.lower() or ".bin"
-    digest = hashlib.sha256(data).hexdigest()
+    digest = payload.sha256
     asset_id = f"amac_asset_{hashlib.sha1(url.encode('utf-8')).hexdigest()[:20]}"
-    asset_dir = AMAC_ASSETS_ROOT / record_id
+    asset_dir = amac_assets_root() / record_id
     asset_dir.mkdir(parents=True, exist_ok=True)
     path = asset_dir / f"{asset_id}{suffix}"
     path.write_bytes(data)
@@ -456,11 +623,9 @@ def _download_asset(
         "asset_id": asset_id,
         "label": _clean_attachment_title(label),
         "source_url": canonical_url(url),
-        "local_file": str(path.relative_to(OUTPUT_DIR)),
-        "content_type": (
-            response.headers.get("Content-Type") or ""
-        ).split(";")[0].strip().lower(),
-        "size_bytes": len(data),
+        "local_file": relative_to_output(path),
+        "content_type": payload.content_type,
+        "size_bytes": payload.size_bytes,
         "sha256": digest,
         "download_status": "ok",
         "extracted_text": extracted_text,
@@ -512,7 +677,7 @@ def crawl_candidate(
             "effective_date": None,
             "ineffective_date": None,
             "status": "unknown",
-            "document_type": classify_document(title, url),
+            **_classified_document_metadata(title, url),
         }
     else:
         response = client.get(url)
@@ -571,7 +736,7 @@ def crawl_candidate(
                     "effective_date": metadata.get("effective_date"),
                     "ineffective_date": metadata.get("ineffective_date"),
                     "status": metadata.get("status") or "unknown",
-                    "document_type": classify_document(
+                    **_classified_document_metadata(
                         str(asset.get("label") or ""),
                         str(asset.get("source_url") or ""),
                     ),
@@ -621,8 +786,9 @@ def crawl_amac(
     force: bool = False,
     delay_min: float = 0.25,
     delay_max: float = 0.7,
+    verify_tls: bool = AMAC_VERIFY_TLS,
 ) -> dict[str, Any]:
-    client = AmacClient(delay_min=delay_min, delay_max=delay_max)
+    client = AmacClient(delay_min=delay_min, delay_max=delay_max, verify_tls=verify_tls)
     candidates = discover_policy_candidates(client, limit=policy_limit)
     candidates.extend(
         discover_xwfb_rule_notice_candidates(
@@ -682,7 +848,14 @@ def crawl_amac(
                         "error": str(exc),
                     }
                 )
-                print(f"  !! AMAC失败: {candidate.get('title')} | {exc}")
+                log_event(
+                    "amac_record_failed",
+                    level="ERROR",
+                    message=f"  !! AMAC失败: {candidate.get('title')} | {exc}",
+                    title=candidate.get("title"),
+                    url=candidate.get("url"),
+                    error_message=str(exc),
+                )
                 continue
         metadata = record.get("metadata") or {}
         items.append(
@@ -691,12 +864,17 @@ def crawl_amac(
                 "name": metadata.get("name"),
                 "document_type": metadata.get("document_type"),
                 "status": metadata.get("status"),
-                "file": str(path.relative_to(OUTPUT_DIR)),
+                "file": relative_to_output(path),
                 "assets": len(record.get("assets") or []),
             }
         )
         if index % 50 == 0 or index == len(candidates):
-            print(f"  AMAC {index}/{len(candidates)}")
+            log_event(
+                "amac_progress",
+                message=f"  AMAC {index}/{len(candidates)}",
+                index=index,
+                total=len(candidates),
+            )
 
     manifest = {
         "schema_version": 1,
@@ -708,10 +886,14 @@ def crawl_amac(
         "failed": len(failures),
         "keywords": keywords or DEFAULT_SITE_KEYWORDS,
         "xwfb_pages": xwfb_pages,
+        "tls_policy": {
+            "verify": client.verify_tls,
+            "source": "default" if verify_tls == AMAC_VERIFY_TLS else "cli",
+        },
         "items": items,
         "failures": failures,
     }
-    save_json(AMAC_MANIFEST, manifest)
+    save_json(amac_manifest_path(), manifest)
     return manifest
 
 
@@ -730,6 +912,11 @@ def main() -> int:
     parser.add_argument("--force", action="store_true")
     parser.add_argument("--delay-min", type=float, default=0.25)
     parser.add_argument("--delay-max", type=float, default=0.7)
+    parser.add_argument(
+        "--amac-insecure-tls",
+        action="store_true",
+        help="临时关闭 AMAC HTTPS 证书校验，并在 manifest 中记录",
+    )
     args = parser.parse_args()
     try:
         manifest = crawl_amac(
@@ -741,18 +928,22 @@ def main() -> int:
             force=args.force,
             delay_min=args.delay_min,
             delay_max=args.delay_max,
+            verify_tls=not args.amac_insecure_tls,
         )
     except KeyboardInterrupt:
         return 130
     except Exception as exc:
-        print(f"失败: {exc}", file=sys.stderr)
+        log_event("cli_error", level="ERROR", message=f"失败: {exc}", error_message=str(exc))
         return 1
-    print(
-        f"完成: candidates={manifest['candidate_count']} count={manifest['count']} "
-        f"written={manifest['written']} failed={manifest['failed']} -> {AMAC_MANIFEST}"
+    log_event(
+        "cli_result",
+        message=(
+            f"完成: candidates={manifest['candidate_count']} count={manifest['count']} "
+            f"written={manifest['written']} failed={manifest['failed']} -> {amac_manifest_path()}"
+        ),
     )
     return 0
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    sys.exit(run_with_output_lock(main, "amac-crawl"))

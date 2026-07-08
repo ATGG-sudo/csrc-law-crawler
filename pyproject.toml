@@ -1,0 +1,109 @@
+[build-system]
+requires = ["setuptools>=69.0.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "csrc-law-crawler"
+version = "0.1.0"
+requires-python = ">=3.10"
+dependencies = [
+  "beautifulsoup4>=4.12.0",
+  "pypdf>=5.0.0",
+  "python-docx>=1.1.0",
+  "requests>=2.31.0",
+]
+
+[tool.setuptools]
+packages = [
+  "csrc_law_crawler",
+  "csrc_law_crawler.cli",
+  "csrc_law_crawler.core",
+  "csrc_law_crawler.sources",
+  "csrc_law_crawler.sources.neris",
+  "csrc_law_crawler.sources.amac",
+  "csrc_law_crawler.processing",
+  "csrc_law_crawler.processing.catalog",
+  "csrc_law_crawler.processing.normalize",
+  "csrc_law_crawler.processing.relations",
+  "csrc_law_crawler.orchestration",
+  "csrc_law_crawler.export",
+]
+py-modules = [
+  "amac_crawl",
+  "api",
+  "asset_text",
+  "build_canonical_relations",
+  "build_catalog",
+  "catalog_rules",
+  "catalog_services",
+  "client",
+  "config",
+  "coverage_gaps",
+  "crawl",
+  "download_assets",
+  "download_utils",
+  "enhance",
+  "export_markdown_catalog",
+  "export_markdown_laws",
+  "failure_taxonomy",
+  "http_policy",
+  "markdown_utils",
+  "migrate_strict_layout",
+  "models",
+  "neris_attachments",
+  "normalize_catalog",
+  "normalize_laws",
+  "parser",
+  "pass2_relations",
+  "pass3_cases",
+  "pass4_writs",
+  "pipeline",
+  "prefetch_revision_evidence",
+  "relation_viewer",
+  "relation_services",
+  "repair",
+  "revisions_graph",
+  "runtime",
+  "settings",
+  "storage",
+  "validate_catalog",
+  "validate_catalog_exports",
+  "validate_enhance",
+  "validate_normalized",
+  "writ_crawl",
+  "writ_parser",
+]
+
+[project.scripts]
+csrc-crawler = "csrc_law_crawler.cli.main:main"
+
+[project.optional-dependencies]
+dev = [
+  "coverage>=7.5.0",
+  "mypy>=1.10.0",
+  "pip-audit>=2.7.0",
+  "pytest>=8.0.0",
+  "ruff>=0.5.0",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+
+[tool.ruff]
+line-length = 100
+extend-exclude = [
+  ".venv",
+  "__pycache__",
+]
+
+[tool.ruff.lint]
+select = ["E9", "F"]
+
+[tool.mypy]
+python_version = "3.10"
+ignore_missing_imports = true
+follow_imports = "skip"
+allow_untyped_defs = true
+allow_incomplete_defs = true
+check_untyped_defs = false

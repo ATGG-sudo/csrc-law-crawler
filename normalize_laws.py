@@ -18,12 +18,16 @@ from urllib.parse import urljoin, urlparse
 
 from bs4 import BeautifulSoup, NavigableString, Tag
 
-from config import BASE_URL, OUTPUT_DIR
+from config import BASE_URL
 from parser import repair_known_neris_mojibake
+from runtime import log_event
 from storage import (
     attachment_index_path,
-    laws_dir,
+    iter_reg_law_files,
     load_json,
+    output_path,
+    relative_to_output,
+    run_with_output_lock,
     save_json,
     utc_now_iso,
     work_dir,
@@ -388,7 +392,7 @@ def _entry_context(entry: dict[str, Any]) -> str:
     return entry.get("title") or entry.get("code") or entry.get("entry_id") or ""
 
 
-def build_normalized_law(path: Path) -> dict[str, Any]:
+def _normalized_source_context(path: Path) -> tuple[dict[str, Any], dict[str, Any], str, str, str]:
     source = load_json(path, {})
     metadata = copy.deepcopy(source.get("metadata") or {})
     metadata = {
@@ -396,27 +400,29 @@ def build_normalized_law(path: Path) -> dict[str, Any]:
         for key, value in metadata.items()
     }
     law_id = str(metadata.get("id") or path.stem.removeprefix("reg_"))
-    source_file = str(path.relative_to(OUTPUT_DIR))
+    source_file = relative_to_output(path)
     detail_url = ((source.get("source") or {}).get("detail_url") or "")
-    normalizer = LawNormalizer(law_id, source_file, detail_url)
+    return source, metadata, law_id, source_file, detail_url
+
+
+def _source_attachments_for_law(
+    source: dict[str, Any],
+    law_id: str,
+) -> list[dict[str, Any]]:
     attachment_index = load_json(attachment_index_path(law_id), {})
-    source_attachments = (
+    return (
         attachment_index.get("attachments")
         or source.get("source_attachments")
         or []
     )
 
-    body_ago = normalizer.normalize_fragment(
-        metadata.get("body_ago") or "",
-        section="body_ago",
-        context=metadata.get("name") or law_id,
-    )
-    body_aft = normalizer.normalize_fragment(
-        metadata.get("body_aft") or "",
-        section="body_aft",
-        context=metadata.get("name") or law_id,
-    )
 
+def _register_source_attachments(
+    normalizer: LawNormalizer,
+    source_attachments: list[dict[str, Any]],
+    *,
+    context: str,
+) -> dict[str, dict[str, Any]]:
     source_attachment_state: dict[str, dict[str, Any]] = {}
     for attachment in source_attachments:
         source_url = attachment.get("source_url")
@@ -427,12 +433,50 @@ def build_normalized_law(path: Path) -> dict[str, Any]:
             ref=str(source_url),
             label=attachment.get("name") or "附件",
             section="source_attachment",
-            context=metadata.get("name") or law_id,
+            context=context,
         )
         source_attachment_state[asset["asset_id"]] = attachment
+    return source_attachment_state
 
+
+def _normalize_entry_items(
+    normalizer: LawNormalizer,
+    entry: dict[str, Any],
+    *,
+    entry_id: Any,
+    entry_context: str,
+) -> list[dict[str, Any]]:
+    normalized_items: list[dict[str, Any]] = []
+    for item in entry.get("items") or []:
+        item_id = item.get("entry_id")
+        item_text = normalizer.normalize_fragment(
+            item.get("text") or "",
+            section="item",
+            entry_id=entry_id,
+            item_id=item_id,
+            context=item.get("title") or item.get("code") or entry_context,
+        )
+        normalized_items.append(
+            {
+                "entry_id": item_id,
+                "code": item.get("code"),
+                "title": repair_known_neris_mojibake(item.get("title") or ""),
+                "text_raw_html": repair_known_neris_mojibake(item.get("text") or ""),
+                "text_plain": item_text["plain"],
+                "text_markdown": item_text["markdown"],
+                "tables": item_text["tables"],
+                "assets": item_text["assets"],
+            }
+        )
+    return normalized_items
+
+
+def _normalize_entries(
+    normalizer: LawNormalizer,
+    entries: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
     normalized_entries: list[dict[str, Any]] = []
-    for entry in source.get("entries") or []:
+    for entry in entries:
         entry_id = entry.get("entry_id")
         entry_context = _entry_context(entry)
         normalized_text = normalizer.normalize_fragment(
@@ -441,29 +485,6 @@ def build_normalized_law(path: Path) -> dict[str, Any]:
             entry_id=entry_id,
             context=entry_context,
         )
-        normalized_items: list[dict[str, Any]] = []
-        for item in entry.get("items") or []:
-            item_id = item.get("entry_id")
-            item_text = normalizer.normalize_fragment(
-                item.get("text") or "",
-                section="item",
-                entry_id=entry_id,
-                item_id=item_id,
-                context=item.get("title") or item.get("code") or entry_context,
-            )
-            normalized_items.append(
-                {
-                    "entry_id": item_id,
-                    "code": item.get("code"),
-                    "title": repair_known_neris_mojibake(item.get("title") or ""),
-                    "text_raw_html": repair_known_neris_mojibake(item.get("text") or ""),
-                    "text_plain": item_text["plain"],
-                    "text_markdown": item_text["markdown"],
-                    "tables": item_text["tables"],
-                    "assets": item_text["assets"],
-                }
-            )
-
         normalized_entries.append(
             {
                 "entry_id": entry_id,
@@ -475,10 +496,23 @@ def build_normalized_law(path: Path) -> dict[str, Any]:
                 "text_markdown": normalized_text["markdown"],
                 "tables": normalized_text["tables"],
                 "assets": normalized_text["assets"],
-                "items": normalized_items,
+                "items": _normalize_entry_items(
+                    normalizer,
+                    entry,
+                    entry_id=entry_id,
+                    entry_context=entry_context,
+                ),
             }
         )
+    return normalized_entries
 
+
+def _compose_full_text(
+    metadata: dict[str, Any],
+    body_ago: dict[str, Any],
+    body_aft: dict[str, Any],
+    normalized_entries: list[dict[str, Any]],
+) -> tuple[str, str]:
     plain_parts = [metadata.get("name") or "", body_ago["plain"]]
     markdown_parts = [metadata.get("name") or "", body_ago["markdown"]]
     for entry in normalized_entries:
@@ -502,16 +536,16 @@ def build_normalized_law(path: Path) -> dict[str, Any]:
         plain_parts.append(body_aft["plain"])
     if body_aft["markdown"]:
         markdown_parts.append(body_aft["markdown"])
+    return (
+        "\n\n".join(part for part in plain_parts if part),
+        "\n\n".join(part for part in markdown_parts if part),
+    )
 
-    assets = normalizer.assets()
+
+def _prior_asset_state(path: Path, law_id: str) -> dict[str, dict[str, Any]]:
     prior_normalized = load_json(normalized_laws_dir() / path.name, {})
     prior_asset_manifest = load_json(
-        OUTPUT_DIR
-        / "raw"
-        / ASSETS_SUBDIR
-        / "embedded"
-        / law_id
-        / "asset_manifest.json",
+        output_path(Path("raw") / ASSETS_SUBDIR / "embedded" / law_id / "asset_manifest.json"),
         {},
     )
     prior_assets = {
@@ -526,6 +560,15 @@ def build_normalized_law(path: Path) -> dict[str, Any]:
             if item.get("asset_id")
         }
     )
+    return prior_assets
+
+
+def _apply_asset_state(
+    assets: list[dict[str, Any]],
+    *,
+    prior_assets: dict[str, dict[str, Any]],
+    source_attachment_state: dict[str, dict[str, Any]],
+) -> None:
     for asset in assets:
         prior = prior_assets.get(str(asset.get("asset_id")))
         if prior:
@@ -557,6 +600,43 @@ def build_normalized_law(path: Path) -> dict[str, Any]:
                 }
             )
 
+
+def build_normalized_law(path: Path) -> dict[str, Any]:
+    source, metadata, law_id, source_file, detail_url = _normalized_source_context(path)
+    normalizer = LawNormalizer(law_id, source_file, detail_url)
+    source_attachments = _source_attachments_for_law(source, law_id)
+
+    body_ago = normalizer.normalize_fragment(
+        metadata.get("body_ago") or "",
+        section="body_ago",
+        context=metadata.get("name") or law_id,
+    )
+    body_aft = normalizer.normalize_fragment(
+        metadata.get("body_aft") or "",
+        section="body_aft",
+        context=metadata.get("name") or law_id,
+    )
+
+    source_attachment_state = _register_source_attachments(
+        normalizer,
+        source_attachments,
+        context=metadata.get("name") or law_id,
+    )
+    normalized_entries = _normalize_entries(normalizer, source.get("entries") or [])
+    full_text_plain, full_text_markdown = _compose_full_text(
+        metadata,
+        body_ago,
+        body_aft,
+        normalized_entries,
+    )
+
+    assets = normalizer.assets()
+    _apply_asset_state(
+        assets,
+        prior_assets=_prior_asset_state(path, law_id),
+        source_attachment_state=source_attachment_state,
+    )
+
     return {
         "source_file": source_file,
         "normalized_at": utc_now_iso(),
@@ -567,8 +647,8 @@ def build_normalized_law(path: Path) -> dict[str, Any]:
         "body_ago": body_ago,
         "body_aft": body_aft,
         "entries": normalized_entries,
-        "full_text_plain": "\n\n".join(part for part in plain_parts if part),
-        "full_text_markdown": "\n\n".join(part for part in markdown_parts if part),
+        "full_text_plain": full_text_plain,
+        "full_text_markdown": full_text_markdown,
         "tables": normalizer.tables,
         "assets": assets,
     }
@@ -577,9 +657,7 @@ def build_normalized_law(path: Path) -> dict[str, Any]:
 def normalize_laws(*, limit: int | None = None, force: bool = False) -> dict[str, Any]:
     out_dir = normalized_laws_dir()
     out_dir.mkdir(parents=True, exist_ok=True)
-    law_files = sorted(laws_dir().glob("reg_*.json"))
-    if limit is not None:
-        law_files = law_files[:limit]
+    law_files = iter_reg_law_files(limit)
 
     manifest_items: list[dict[str, Any]] = []
     written = 0
@@ -605,19 +683,24 @@ def normalize_laws(*, limit: int | None = None, force: bool = False) -> dict[str
             {
                 "id": law_id,
                 "name": metadata.get("name"),
-                "source_file": str(path.relative_to(OUTPUT_DIR)),
-                "file": str(out_path.relative_to(OUTPUT_DIR)),
+                "source_file": relative_to_output(path),
+                "file": relative_to_output(out_path),
                 "tables": len(doc.get("tables") or []),
                 "assets": len(doc.get("assets") or []),
             }
         )
         if index % 100 == 0 or index == len(law_files):
-            print(f"  normalized {index}/{len(law_files)}")
+            log_event(
+                "normalize_progress",
+                message=f"  normalized {index}/{len(law_files)}",
+                index=index,
+                total=len(law_files),
+            )
 
     manifest = {
         "updated_at": utc_now_iso(),
         "source_dir": "laws",
-        "normalized_dir": str(out_dir.relative_to(OUTPUT_DIR)),
+        "normalized_dir": relative_to_output(out_dir),
         "count": len(manifest_items),
         "written": written,
         "skipped": skipped,
@@ -638,17 +721,20 @@ def main() -> int:
     try:
         manifest = normalize_laws(limit=args.limit, force=args.force)
     except KeyboardInterrupt:
-        print("已中断", file=sys.stderr)
+        log_event("cli_interrupted", level="ERROR", message="已中断")
         return 130
 
-    print(
-        "完成: "
-        f"count={manifest['count']} written={manifest['written']} "
-        f"skipped={manifest['skipped']} tables={manifest['tables']} "
-        f"assets={manifest['assets']} -> {normalized_manifest_path()}"
+    log_event(
+        "cli_result",
+        message=(
+            "完成: "
+            f"count={manifest['count']} written={manifest['written']} "
+            f"skipped={manifest['skipped']} tables={manifest['tables']} "
+            f"assets={manifest['assets']} -> {normalized_manifest_path()}"
+        ),
     )
     return 0
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    sys.exit(run_with_output_lock(main, "normalize-laws"))

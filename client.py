@@ -19,13 +19,15 @@ from config import (
     RETRY_BACKOFF_BASE,
     USER_AGENT,
 )
-
-
-class RetryableContentError(RuntimeError):
-    """A syntactically successful response whose content is unusable."""
+from download_utils import DownloadedBytes, RetryableContentError, read_binary_response
+from failure_taxonomy import FailureReason
+from http_policy import HTTPPolicy
+from runtime import log_event, log_metric
 
 
 class HumanLikeClient:
+    source_name = "neris"
+
     def __init__(
         self,
         *,
@@ -35,17 +37,21 @@ class HumanLikeClient:
         batch_pause_min: float = BATCH_PAUSE_MIN,
         batch_pause_max: float = BATCH_PAUSE_MAX,
     ) -> None:
-        self.session = requests.Session()
-        self.session.headers.update(
-            {
+        self.policy = HTTPPolicy(
+            source_name=self.source_name,
+            base_url=BASE_URL,
+            headers={
                 "User-Agent": USER_AGENT,
                 "Accept": "application/json, text/javascript, */*; q=0.01",
                 "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8",
                 "Origin": "https://neris.csrc.gov.cn",
                 "Referer": f"{BASE_URL}",
                 "X-Requested-With": "XMLHttpRequest",
-            }
+            },
+            blocked_markers=("WAF", "请求已中断", "504 Gateway", "502 Bad Gateway"),
         )
+        self.session = requests.Session()
+        self.session.headers.update(self.policy.headers)
         self._request_count = 0
         self.delay_min = delay_min
         self.delay_max = delay_max
@@ -64,13 +70,40 @@ class HumanLikeClient:
             and self._request_count % self.batch_size == 0
         ):
             pause = random.uniform(self.batch_pause_min, self.batch_pause_max)
-            print(f"  [休息 {pause:.1f}s，已请求 {self._request_count} 次]")
+            log_event(
+                "http_batch_pause",
+                message=f"  [休息 {pause:.1f}s，已请求 {self._request_count} 次]",
+                request_count=self._request_count,
+                pause_seconds=round(pause, 3),
+            )
             time.sleep(pause)
 
     def _is_blocked(self, response: requests.Response) -> bool:
         text = response.text[:500]
-        blocked_markers = ("WAF", "请求已中断", "504 Gateway", "502 Bad Gateway")
-        return response.status_code >= 500 or any(m in text for m in blocked_markers)
+        return response.status_code >= 500 or any(
+            marker in text for marker in self.policy.blocked_markers
+        )
+
+    def _record_response(
+        self,
+        method: str,
+        url: str,
+        response: requests.Response,
+    ) -> None:
+        status = getattr(response, "status_code", None)
+        log_metric(
+            "http_requests_total",
+            source=self.source_name,
+            method=method,
+            status=status,
+        )
+        log_event(
+            "http_request",
+            source=self.source_name,
+            method=method,
+            url=url,
+            status=status,
+        )
 
     def get_html(self, path: str, *, referer: str | None = None) -> str:
         """GET 详情页 HTML（执法文书正文在服务端渲染页面中）。"""
@@ -85,12 +118,34 @@ class HumanLikeClient:
             self._human_pause()
             self._maybe_batch_pause()
             try:
-                response = self.session.get(url, timeout=60, headers=headers)
+                response = self.session.get(
+                    url,
+                    timeout=self.policy.timeout_seconds,
+                    headers=headers,
+                )
                 self._request_count += 1
+                self._record_response("GET", url, response)
 
                 if self._is_blocked(response):
                     wait = RETRY_BACKOFF_BASE * attempt + random.uniform(2, 6)
-                    print(f"  [拦截/超时，{wait:.1f}s 后重试 {attempt}/{MAX_RETRIES}]")
+                    log_event(
+                        "http_retry",
+                        level="WARNING",
+                        message=(
+                            f"  [拦截/超时，{wait:.1f}s 后重试 "
+                            f"{attempt}/{MAX_RETRIES}]"
+                        ),
+                        url=url,
+                        attempt=attempt,
+                        max_retries=MAX_RETRIES,
+                        wait_seconds=round(wait, 3),
+                        reason=FailureReason.NETWORK_BLOCKED,
+                    )
+                    log_metric(
+                        "http_retries_total",
+                        source=self.source_name,
+                        reason=FailureReason.NETWORK_BLOCKED,
+                    )
                     time.sleep(wait)
                     continue
 
@@ -101,7 +156,23 @@ class HumanLikeClient:
             except requests.RequestException as exc:
                 last_error = exc
                 wait = RETRY_BACKOFF_BASE * attempt + random.uniform(1, 4)
-                print(f"  [错误 {exc!r}，{wait:.1f}s 后重试 {attempt}/{MAX_RETRIES}]")
+                log_event(
+                    "http_retry",
+                    level="WARNING",
+                    message=f"  [错误 {exc!r}，{wait:.1f}s 后重试 {attempt}/{MAX_RETRIES}]",
+                    url=url,
+                    attempt=attempt,
+                    max_retries=MAX_RETRIES,
+                    wait_seconds=round(wait, 3),
+                    reason=FailureReason.NETWORK_REQUEST_EXCEPTION,
+                    error_type=type(exc).__name__,
+                    error_message=str(exc),
+                )
+                log_metric(
+                    "http_retries_total",
+                    source=self.source_name,
+                    reason=FailureReason.NETWORK_REQUEST_EXCEPTION,
+                )
                 time.sleep(wait)
 
         raise RuntimeError(f"请求失败: {url}") from last_error
@@ -113,6 +184,16 @@ class HumanLikeClient:
         headers: dict[str, str] | None = None,
     ) -> tuple[bytes, str]:
         """GET binary content with the same retry/backoff policy as API calls."""
+        payload = self.get_binary_payload(url, headers=headers)
+        return payload.data, payload.content_type
+
+    def get_binary_payload(
+        self,
+        url: str,
+        *,
+        headers: dict[str, str] | None = None,
+    ) -> DownloadedBytes:
+        """GET binary content and return metadata calculated while streaming."""
         last_error: Exception | None = None
 
         for attempt in range(1, MAX_RETRIES + 1):
@@ -121,38 +202,73 @@ class HumanLikeClient:
             try:
                 response = self.session.get(
                     url,
-                    timeout=60,
+                    timeout=self.policy.timeout_seconds,
                     headers=headers,
+                    stream=True,
                 )
                 self._request_count += 1
+                self._record_response("GET", url, response)
 
                 if self._is_blocked(response):
                     wait = RETRY_BACKOFF_BASE * attempt + random.uniform(2, 6)
-                    print(f"  [拦截/超时，{wait:.1f}s 后重试 {attempt}/{MAX_RETRIES}]")
+                    log_event(
+                        "http_retry",
+                        level="WARNING",
+                        message=(
+                            f"  [拦截/超时，{wait:.1f}s 后重试 "
+                            f"{attempt}/{MAX_RETRIES}]"
+                        ),
+                        url=url,
+                        attempt=attempt,
+                        max_retries=MAX_RETRIES,
+                        wait_seconds=round(wait, 3),
+                        reason=FailureReason.NETWORK_BLOCKED,
+                    )
+                    log_metric(
+                        "http_retries_total",
+                        source=self.source_name,
+                        reason=FailureReason.NETWORK_BLOCKED,
+                    )
                     time.sleep(wait)
                     continue
 
                 response.raise_for_status()
-                data = response.content
-                if not data:
-                    raise RetryableContentError("empty attachment response")
-                content_type = (
-                    response.headers.get("Content-Type") or ""
-                ).split(";")[0].strip().lower()
-                prefix = data[:500].lstrip().lower()
-                if content_type == "text/html" and (
-                    prefix.startswith(b"<!doctype html")
-                    or prefix.startswith(b"<html")
-                ):
-                    raise RetryableContentError(
-                        "attachment endpoint returned an HTML error page"
-                    )
-                return data, content_type
+                payload = read_binary_response(response)
+                log_metric(
+                    "download_bytes_total",
+                    source=self.source_name,
+                    amount=payload.size_bytes,
+                )
+                return payload
 
             except (requests.RequestException, RetryableContentError) as exc:
                 last_error = exc
                 wait = RETRY_BACKOFF_BASE * attempt + random.uniform(1, 4)
-                print(f"  [错误 {exc!r}，{wait:.1f}s 后重试 {attempt}/{MAX_RETRIES}]")
+                log_event(
+                    "http_retry",
+                    level="WARNING",
+                    message=f"  [错误 {exc!r}，{wait:.1f}s 后重试 {attempt}/{MAX_RETRIES}]",
+                    url=url,
+                    attempt=attempt,
+                    max_retries=MAX_RETRIES,
+                    wait_seconds=round(wait, 3),
+                    reason=(
+                        exc.reason
+                        if isinstance(exc, RetryableContentError)
+                        else FailureReason.NETWORK_REQUEST_EXCEPTION
+                    ),
+                    error_type=type(exc).__name__,
+                    error_message=str(exc),
+                )
+                log_metric(
+                    "http_retries_total",
+                    source=self.source_name,
+                    reason=(
+                        exc.reason
+                        if isinstance(exc, RetryableContentError)
+                        else FailureReason.NETWORK_REQUEST_EXCEPTION
+                    ),
+                )
                 time.sleep(wait)
 
         raise RuntimeError(f"请求失败: {url}") from last_error
@@ -174,14 +290,32 @@ class HumanLikeClient:
                 response = self.session.post(
                     url,
                     data=data,
-                    timeout=60,
+                    timeout=self.policy.timeout_seconds,
                     headers={"Content-Type": "application/x-www-form-urlencoded"},
                 )
                 self._request_count += 1
+                self._record_response("POST", url, response)
 
                 if self._is_blocked(response):
                     wait = RETRY_BACKOFF_BASE * attempt + random.uniform(2, 6)
-                    print(f"  [拦截/超时，{wait:.1f}s 后重试 {attempt}/{MAX_RETRIES}]")
+                    log_event(
+                        "http_retry",
+                        level="WARNING",
+                        message=(
+                            f"  [拦截/超时，{wait:.1f}s 后重试 "
+                            f"{attempt}/{MAX_RETRIES}]"
+                        ),
+                        url=url,
+                        attempt=attempt,
+                        max_retries=MAX_RETRIES,
+                        wait_seconds=round(wait, 3),
+                        reason=FailureReason.NETWORK_BLOCKED,
+                    )
+                    log_metric(
+                        "http_retries_total",
+                        source=self.source_name,
+                        reason=FailureReason.NETWORK_BLOCKED,
+                    )
                     time.sleep(wait)
                     continue
 
@@ -198,7 +332,31 @@ class HumanLikeClient:
             except (requests.RequestException, ValueError) as exc:
                 last_error = exc
                 wait = RETRY_BACKOFF_BASE * attempt + random.uniform(1, 4)
-                print(f"  [错误 {exc!r}，{wait:.1f}s 后重试 {attempt}/{MAX_RETRIES}]")
+                log_event(
+                    "http_retry",
+                    level="WARNING",
+                    message=f"  [错误 {exc!r}，{wait:.1f}s 后重试 {attempt}/{MAX_RETRIES}]",
+                    url=url,
+                    attempt=attempt,
+                    max_retries=MAX_RETRIES,
+                    wait_seconds=round(wait, 3),
+                    reason=(
+                        FailureReason.PARSE_SCHEMA_MISMATCH
+                        if isinstance(exc, ValueError)
+                        else FailureReason.NETWORK_REQUEST_EXCEPTION
+                    ),
+                    error_type=type(exc).__name__,
+                    error_message=str(exc),
+                )
+                log_metric(
+                    "http_retries_total",
+                    source=self.source_name,
+                    reason=(
+                        FailureReason.PARSE_SCHEMA_MISMATCH
+                        if isinstance(exc, ValueError)
+                        else FailureReason.NETWORK_REQUEST_EXCEPTION
+                    ),
+                )
                 time.sleep(wait)
 
         raise RuntimeError(f"请求失败: {url}") from last_error

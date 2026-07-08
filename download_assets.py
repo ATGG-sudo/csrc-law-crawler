@@ -6,35 +6,52 @@ from __future__ import annotations
 import argparse
 import hashlib
 import mimetypes
-import random
 import sys
-import time
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
 
-import requests
-
-from config import (
-    BASE_URL,
-    BATCH_PAUSE_MAX,
-    BATCH_PAUSE_MIN,
-    BATCH_SIZE,
-    DELAY_MAX,
-    DELAY_MIN,
-    MAX_RETRIES,
-    RETRY_BACKOFF_BASE,
-    OUTPUT_DIR,
-    USER_AGENT,
+from client import HumanLikeClient
+from config import BASE_URL
+from normalize_laws import normalized_laws_dir, normalized_manifest_path
+from runtime import log_event
+from storage import (
+    listed_output_files,
+    load_json,
+    output_path,
+    relative_to_output,
+    run_with_output_lock,
+    save_json,
+    utc_now_iso,
 )
-from normalize_laws import normalized_laws_dir
-from storage import load_json, save_json, utc_now_iso
 from storage import raw_dir, reports_dir, work_dir
 
-ASSETS_ROOT = raw_dir() / "assets"
-LAW_ASSETS_ROOT = ASSETS_ROOT / "embedded"
-ASSETS_MANIFEST = reports_dir() / "assets_manifest.json"
-ASSET_FAILURES = reports_dir() / "assets_failures.json"
+
+def assets_root() -> Path:
+    return raw_dir() / "assets"
+
+
+def law_assets_root() -> Path:
+    return assets_root() / "embedded"
+
+
+def assets_manifest_path() -> Path:
+    return reports_dir() / "assets_manifest.json"
+
+
+def asset_failures_path() -> Path:
+    return reports_dir() / "assets_failures.json"
+
+
+def _normalized_law_files(limit: int | None = None) -> list[Path]:
+    return listed_output_files(
+        normalized_manifest_path(),
+        field="file",
+        fallback_dir=normalized_laws_dir(),
+        pattern="reg_*.json",
+        limit=limit,
+    )
+
 
 CONTENT_TYPE_EXTENSIONS = {
     "application/msword": ".doc",
@@ -52,22 +69,6 @@ CONTENT_TYPE_EXTENSIONS = {
     "text/csv": ".csv",
     "text/plain": ".txt",
 }
-
-
-def _pause(request_count: int) -> None:
-    time.sleep(random.uniform(DELAY_MIN, DELAY_MAX))
-    if request_count > 0 and request_count % BATCH_SIZE == 0:
-        time.sleep(random.uniform(BATCH_PAUSE_MIN, BATCH_PAUSE_MAX))
-
-
-def _is_blocked(response: requests.Response) -> bool:
-    text = response.text[:500] if response.content else ""
-    blocked_markers = ("WAF", "请求已中断", "504 Gateway", "502 Bad Gateway")
-    return response.status_code >= 500 or any(marker in text for marker in blocked_markers)
-
-
-def _content_type(response: requests.Response) -> str:
-    return (response.headers.get("Content-Type") or "").split(";")[0].strip().lower()
 
 
 def _extension_from_data(data: bytes, url: str, content_type: str) -> str:
@@ -103,46 +104,20 @@ def _extension_from_data(data: bytes, url: str, content_type: str) -> str:
     return ".bin"
 
 
-def _download(session: requests.Session, url: str, request_count: int) -> tuple[bytes, str, int]:
-    last_error: Exception | None = None
-    headers = {
-        "Accept": "*/*",
-        "Referer": BASE_URL,
-    }
-    for attempt in range(1, MAX_RETRIES + 1):
-        _pause(request_count)
-        try:
-            response = session.get(url, timeout=60, headers=headers)
-            request_count += 1
-            if _is_blocked(response):
-                wait = RETRY_BACKOFF_BASE * attempt + random.uniform(2, 6)
-                print(f"  [拦截/超时，{wait:.1f}s 后重试 {attempt}/{MAX_RETRIES}] {url}")
-                time.sleep(wait)
-                continue
-            response.raise_for_status()
-            return response.content, _content_type(response), request_count
-        except requests.RequestException as exc:
-            last_error = exc
-            wait = RETRY_BACKOFF_BASE * attempt + random.uniform(1, 4)
-            print(f"  [错误 {exc!r}，{wait:.1f}s 后重试 {attempt}/{MAX_RETRIES}] {url}")
-            time.sleep(wait)
-    raise RuntimeError(f"请求失败: {url}") from last_error
-
-
 def _write_asset_file(law_id: str, asset: dict[str, Any], data: bytes, extension: str) -> str:
-    law_dir = LAW_ASSETS_ROOT / law_id
+    law_dir = law_assets_root() / law_id
     law_dir.mkdir(parents=True, exist_ok=True)
     filename = f"{asset['asset_id']}{extension}"
     path = law_dir / filename
     path.write_bytes(data)
-    return str(path.relative_to(OUTPUT_DIR))
+    return relative_to_output(path)
 
 
 def _existing_file(asset: dict[str, Any]) -> Path | None:
     local_file = asset.get("local_file")
     if not local_file:
         return None
-    path = OUTPUT_DIR / local_file
+    path = output_path(local_file)
     if path.exists() and path.is_file() and path.stat().st_size > 0:
         return path
     return None
@@ -170,19 +145,9 @@ def download_assets(
     force: bool = False,
 ) -> dict[str, Any]:
     partial_scope = limit_laws is not None or limit_assets is not None
-    law_files = sorted(normalized_laws_dir().glob("reg_*.json"))
-    if limit_laws is not None:
-        law_files = law_files[:limit_laws]
+    law_files = _normalized_law_files(limit_laws)
 
-    session = requests.Session()
-    session.headers.update(
-        {
-            "User-Agent": USER_AGENT,
-            "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8",
-        }
-    )
-
-    request_count = 0
+    client = HumanLikeClient()
     downloaded = 0
     skipped = 0
     failed = 0
@@ -222,10 +187,13 @@ def download_assets(
                 continue
 
             try:
-                data, content_type, request_count = _download(session, source_url, request_count)
-                if not data:
-                    raise RuntimeError("empty response body")
-                digest = hashlib.sha256(data).hexdigest()
+                payload = client.get_binary_payload(
+                    source_url,
+                    headers={"Accept": "*/*", "Referer": BASE_URL},
+                )
+                data = payload.data
+                content_type = payload.content_type
+                digest = payload.sha256
                 extension = _extension_from_data(data, source_url, content_type)
                 local_file = _write_asset_file(law_id, asset, data, extension)
                 asset.update(
@@ -233,7 +201,7 @@ def download_assets(
                         "local_file": local_file,
                         "content_type": content_type,
                         "sha256": digest,
-                        "size_bytes": len(data),
+                        "size_bytes": payload.size_bytes,
                         "download_status": "ok",
                         "downloaded_at": utc_now_iso(),
                     }
@@ -242,7 +210,12 @@ def download_assets(
                 manifest_items.append(_asset_record(law_id, asset))
                 downloaded += 1
                 changed = True
-                print(f"  downloaded {asset['asset_id']} -> {local_file}")
+                log_event(
+                    "asset_downloaded",
+                    message=f"  downloaded {asset['asset_id']} -> {local_file}",
+                    asset_id=asset.get("asset_id"),
+                    local_file=local_file,
+                )
             except Exception as exc:
                 asset["download_status"] = "failed"
                 asset["download_error"] = str(exc)
@@ -253,7 +226,14 @@ def download_assets(
                 failures.append(_asset_record(law_id, asset) | {"error": str(exc)})
                 failed += 1
                 changed = True
-                print(f"  !! failed {asset.get('asset_id')} {source_url}: {exc}")
+                log_event(
+                    "asset_download_failed",
+                    level="ERROR",
+                    message=f"  !! failed {asset.get('asset_id')} {source_url}: {exc}",
+                    asset_id=asset.get("asset_id"),
+                    source_url=source_url,
+                    error_message=str(exc),
+                )
 
         if changed:
             save_json(path, doc)
@@ -261,13 +241,18 @@ def download_assets(
                 "updated_at": utc_now_iso(),
                 "law_id": law_id,
                 "law_name": metadata.get("name"),
-                "normalized_file": str(path.relative_to(OUTPUT_DIR)),
+                "normalized_file": relative_to_output(path),
                 "assets": [_asset_record(law_id, item) for item in assets],
             }
-            save_json(LAW_ASSETS_ROOT / law_id / "asset_manifest.json", law_manifest)
+            save_json(law_assets_root() / law_id / "asset_manifest.json", law_manifest)
 
         if law_index % 100 == 0 or law_index == len(law_files):
-            print(f"  scanned laws {law_index}/{len(law_files)}")
+            log_event(
+                "asset_scan_progress",
+                message=f"  scanned laws {law_index}/{len(law_files)}",
+                index=law_index,
+                total=len(law_files),
+            )
         if limit_assets is not None and seen_assets >= limit_assets:
             break
 
@@ -275,8 +260,8 @@ def download_assets(
         "schema_version": 1,
         "updated_at": utc_now_iso(),
         "scope": "partial" if partial_scope else "full",
-        "normalized_dir": str(normalized_laws_dir().relative_to(OUTPUT_DIR)),
-        "assets_root": str(ASSETS_ROOT.relative_to(OUTPUT_DIR)),
+        "normalized_dir": relative_to_output(normalized_laws_dir()),
+        "assets_root": relative_to_output(assets_root()),
         "seen_assets": seen_assets,
         "downloaded": downloaded,
         "skipped": skipped,
@@ -295,10 +280,10 @@ def download_assets(
         run_dir = work_dir() / "runs" / f"assets_{stamp}"
         save_json(run_dir / "manifest.json", manifest)
         save_json(run_dir / "failures.json", failure_doc)
-        manifest["output"] = str(run_dir.relative_to(OUTPUT_DIR))
+        manifest["output"] = relative_to_output(run_dir)
     else:
-        save_json(ASSETS_MANIFEST, manifest)
-        save_json(ASSET_FAILURES, failure_doc)
+        save_json(assets_manifest_path(), manifest)
+        save_json(asset_failures_path(), failure_doc)
     return manifest
 
 
@@ -311,7 +296,7 @@ def rebuild_asset_manifests() -> dict[str, Any]:
     failed_assets = 0
     pending_assets = 0
 
-    for path in sorted(normalized_laws_dir().glob("reg_*.json")):
+    for path in _normalized_law_files():
         doc = load_json(path, {})
         metadata = doc.get("metadata") or {}
         law_id = str(metadata.get("id") or path.stem.removeprefix("reg_"))
@@ -341,19 +326,19 @@ def rebuild_asset_manifests() -> dict[str, Any]:
             "updated_at": utc_now_iso(),
             "law_id": law_id,
             "law_name": metadata.get("name"),
-            "normalized_file": str(path.relative_to(OUTPUT_DIR)),
+            "normalized_file": relative_to_output(path),
             "assets": [
                 _asset_record(law_id, asset) for asset in embedded_assets
             ],
         }
-        save_json(LAW_ASSETS_ROOT / law_id / "asset_manifest.json", law_manifest)
+        save_json(law_assets_root() / law_id / "asset_manifest.json", law_manifest)
 
     manifest = {
         "schema_version": 1,
         "updated_at": utc_now_iso(),
         "scope": "full",
-        "normalized_dir": str(normalized_laws_dir().relative_to(OUTPUT_DIR)),
-        "assets_root": str(ASSETS_ROOT.relative_to(OUTPUT_DIR)),
+        "normalized_dir": relative_to_output(normalized_laws_dir()),
+        "assets_root": relative_to_output(assets_root()),
         "seen_assets": seen_assets,
         "downloaded": 0,
         "skipped": ok_assets,
@@ -361,9 +346,9 @@ def rebuild_asset_manifests() -> dict[str, Any]:
         "pending": pending_assets,
         "items": manifest_items,
     }
-    save_json(ASSETS_MANIFEST, manifest)
+    save_json(assets_manifest_path(), manifest)
     save_json(
-        ASSET_FAILURES,
+        asset_failures_path(),
         {
             "updated_at": utc_now_iso(),
             "failed": failed_assets,
@@ -386,7 +371,11 @@ def main() -> int:
     args = parser.parse_args()
 
     if not normalized_laws_dir().exists():
-        print("normalized/laws 不存在，请先运行 python normalize_laws.py", file=sys.stderr)
+        log_event(
+            "cli_error",
+            level="ERROR",
+            message="normalized/laws 不存在，请先运行 python normalize_laws.py",
+        )
         return 2
 
     try:
@@ -399,17 +388,20 @@ def main() -> int:
                 force=args.force,
             )
     except KeyboardInterrupt:
-        print("已中断", file=sys.stderr)
+        log_event("cli_interrupted", level="ERROR", message="已中断")
         return 130
 
-    print(
-        "完成: "
-        f"seen={manifest['seen_assets']} downloaded={manifest['downloaded']} "
-        f"skipped={manifest['skipped']} failed={manifest['failed']} -> "
-        f"{manifest.get('output') or ASSETS_MANIFEST}"
+    log_event(
+        "cli_result",
+        message=(
+            "完成: "
+            f"seen={manifest['seen_assets']} downloaded={manifest['downloaded']} "
+            f"skipped={manifest['skipped']} failed={manifest['failed']} -> "
+            f"{manifest.get('output') or assets_manifest_path()}"
+        ),
     )
     return 0
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    sys.exit(run_with_output_lock(main, "download-assets"))

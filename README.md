@@ -17,8 +17,20 @@
 - 抓取 AMAC 政策法规、页面正文和附件，补充 NERIS 未收录内容。
 - 合并 NERIS 与 AMAC 来源，生成来源无关的统一法规目录。
 - 按来源和标题证据归一化效力状态，并推断正式版替代试行版。
+- 为分类、匹配、效力、关系和人工核验规则输出稳定 `rule_id` 和规则 manifest。
 - 清洗 HTML、提取表格和附件，导出纯文本及 Markdown。
 - 使用 checkpoint 断点续传，并提供多层数据校验脚本。
+
+## 工程结构
+
+项目保留原有脚本入口，便于直接运行既有流水线；同时提供 `csrc_law_crawler/` 包作为新的稳定 import surface，后续模块迁移优先放入包命名空间。当前主要包入口包括：
+
+```text
+csrc_law_crawler.core       # Settings、RunContext、FileStore、HTTP policy、models
+csrc_law_crawler.sources    # NERIS / AMAC source adapter exports
+csrc_law_crawler.processing # catalog / relation processing helpers
+csrc_law_crawler.export     # Markdown export helpers
+```
 
 ## 运行要求
 
@@ -46,19 +58,60 @@ Windows PowerShell 激活虚拟环境：
 
 ## 配置输出目录
 
-默认输出目录在 [config.py](config.py) 中：
+默认输出目录为当前工作目录下的 `csrc-output/`。生产或全量运行不要改源码里的路径；请显式使用环境变量、配置文件或全局 CLI 参数指定输出目录：
 
-```python
-OUTPUT_DIR = Path("/mnt/d/FUND_COMPLIANCE/CSRC")
+```bash
+export CSRC_OUTPUT_ROOT=/data/csrc-law
 ```
 
-首次运行前请将它改为本机可写目录，例如：
+PowerShell：
 
-```python
-OUTPUT_DIR = Path("/data/csrc-law")
+```powershell
+$env:CSRC_OUTPUT_ROOT = "D:\FUND_COMPLIANCE\CSRC"
 ```
 
-所有脚本共享该目录。不要让两个爬虫实例同时写入同一个输出目录。
+也可以写一个 JSON 配置文件，并通过 `CSRC_CONFIG_FILE` 或 `--config` 指定：
+
+```json
+{
+  "output_root": "/data/csrc-law",
+  "max_download_bytes": 104857600,
+  "amac_verify_tls": true,
+  "delay_min": 1.8,
+  "delay_max": 3.6,
+  "max_retries": 5,
+  "retry_backoff_base": 5.0,
+  "workers": 1
+}
+```
+
+也可以对单次运行使用全局 CLI 参数，写入型脚本都会识别并在正式解析脚本参数前剥离：
+
+```bash
+python crawl.py --output-root /data/csrc-law --types regulation --limit 5
+python repair.py --config ./csrc_crawler_config.json --phase p2
+python download_assets.py --max-download-bytes 104857600
+python amac_crawl.py --delay-min 0.25 --delay-max 0.7 --max-retries 5
+```
+
+可选安全配置：
+
+```bash
+# 单个附件/二进制响应的最大读取字节数，默认 100 MiB
+export CSRC_MAX_DOWNLOAD_BYTES=104857600
+
+# 默认校验 AMAC HTTPS 证书；仅在排查证书环境问题时临时关闭
+export CSRC_AMAC_VERIFY_TLS=true
+
+# 请求节奏与重试策略也可以由环境变量、配置文件或全局 CLI 参数覆盖
+export CSRC_DELAY_MIN=1.8
+export CSRC_DELAY_MAX=3.6
+export CSRC_MAX_RETRIES=5
+export CSRC_RETRY_BACKOFF_BASE=5.0
+export CSRC_WORKERS=1
+```
+
+所有写入型脚本会获取输出目录锁。不要并行启动多个全量实例；如果误启动，后启动的进程会直接失败而不是和已有进程交错写入。
 
 ## 5 分钟试跑
 
@@ -87,6 +140,16 @@ OUTPUT_DIR/
 └── work/markdown_neris/   # NERIS 中间 Markdown
 ```
 
+写入型脚本还会为每次运行生成：
+
+```text
+OUTPUT_DIR/reports/runs/{run_id}/
+├── run_manifest.json
+├── events.jsonl
+├── failures.jsonl
+└── metrics.json
+```
+
 ## 使用方式
 
 ### 方案一：只构建 NERIS 法规库
@@ -113,11 +176,15 @@ python enhance.py --pass 4
 python neris_attachments.py --workers 1
 ```
 
+`crawl.py` 使用同一套 `PipelineStep` / `StepResult` 编排。`--types all` 会按“法规、执法文书”生成两个阶段；默认任一类型抓取出现局部失败就停止，并写入 `reports/crawl_step_results.json` 和对应 failure report。只有显式加 `--allow-incomplete` 时才会继续后续类型。
+
 如果确实需要官网全部执法文书，而不只是案例索引引用的文书：
 
 ```bash
 python enhance.py --pass 4 --all-writs
 ```
+
+`enhance.py` 同样使用统一 `PipelineStep` / `StepResult` 编排。默认任一 pass 返回 `incomplete` 或 `failed` 就停止，并写入 `reports/enhance_step_results.json`；只有显式加 `--allow-incomplete` 时才会继续执行后续 pass。
 
 ### 方案二：生成适合检索 / RAG 的数据
 
@@ -145,6 +212,7 @@ python export_markdown_laws.py --force --clean
 - 保留表格的检索：`canonical/json/* -> full_text_markdown`
 - 人工阅读：`canonical/markdown/{current,unknown,historical,reference}/`
 - 唯一正式关系图：`canonical/relations/graph.json`
+- 关系图人工巡检：`reports/relation_viewer/index.html`
 - 原始数据追溯：`raw/neris/laws/`、`raw/amac/records/`
 - 效力规则说明：[规则说明.md](规则说明.md)
 
@@ -174,6 +242,8 @@ python repair.py --phase p0 --delay-min 1.8 --delay-max 3.6
 python repair.py --phase p1 --delay-min 1.8 --delay-max 3.6
 python repair.py --phase p2
 ```
+
+`repair.py` 使用统一 `PipelineStep` / `StepResult` 编排。默认任一阶段返回 `incomplete` 或 `failed` 就停止后续阶段，并写入 `reports/repair_step_results.json`。只有显式加 `--allow-incomplete` 时才会继续执行下游阶段，最终结果仍会标记为 `incomplete`，用于调试和取证，不建议作为正式发布输入。
 
 正式输出：
 
@@ -206,6 +276,7 @@ OUTPUT_DIR/canonical/
 | 生成统一目录 | `python build_catalog.py` |
 | 清洗统一目录 | `python normalize_catalog.py --force --clean` |
 | 导出统一目录 Markdown | `python export_markdown_catalog.py --force --clean` |
+| 导出关系图查看器 | `python relation_viewer.py` |
 
 查看任意入口的完整参数：
 
@@ -216,14 +287,38 @@ python amac_crawl.py --help
 python repair.py --help
 ```
 
-## 校验
-
-运行单元测试和语法检查：
+安装为包后也可以使用统一入口；旧脚本入口保持兼容：
 
 ```bash
-python -m unittest discover -s tests -v
+csrc-crawler crawl --types regulation
+csrc-crawler enhance --pass 2 --rebuild-relations
+csrc-crawler repair --phase p2
+csrc-crawler validate-catalog-exports
+```
+
+## 校验
+
+运行测试和语法检查：
+
+```bash
+python -m pytest -q
 python -m compileall -q .
 ```
+
+安装开发依赖后，本地可运行与 CI 一致的质量检查：
+
+```bash
+python -m pip install -e ".[dev]"
+python -m ruff check .
+python -m mypy *.py tests
+python -m coverage run -m pytest -q
+python -m coverage report
+python -m pip_audit -r requirements.txt --progress-spinner off
+```
+
+CI 配置位于 `.github/workflows/ci.yml`，会运行 pytest、语法检查、ruff、mypy、coverage 和依赖扫描；依赖扫描当前作为告警项，不阻断普通代码变更。
+
+关键 JSON 产物的 schema 快照位于 `schemas/*.schema.json`，对应的运行时契约在 `models.py`。`validate_catalog.py`、`validate_normalized.py`、`validate_catalog_exports.py` 会在原有业务校验前执行基础结构校验。
 
 校验不同数据层：
 
@@ -249,6 +344,12 @@ python validate_catalog_exports.py
 
    默认单请求间隔为 1.8–3.6 秒，每 40 次请求额外暂停 8–15 秒。全量任务耗时较长是正常现象。不要并行启动多个全量实例。
 
+   写入型脚本会使用输出目录锁保护 `raw/`、`work/`、`canonical/` 和 `reports/`；锁文件位于 `CSRC_OUTPUT_ROOT/.csrc-law-crawler.lock`。
+
+   写入型 CLI 和校验 CLI 运行都会在 `reports/runs/` 下生成 run manifest、事件、失败和指标文件，便于自动化调度或事后排查。
+
+   多阶段流水线还会写出 `reports/crawl_step_results.json`、`reports/repair_step_results.json` 或 `reports/enhance_step_results.json`，其中每个阶段都有 `complete / incomplete / failed` 状态；下游默认拒绝消费非 complete 阶段，除非运行时显式指定 `--allow-incomplete`。
+
 2. 修订关系采用事务式发布
 
    `--rebuild-relations` 与 `--limit` 的组合会被直接拒绝。任务中存在任一失败时，旧正式图保持不变，checkpoint 标记为 `incomplete`。
@@ -263,9 +364,13 @@ python validate_catalog_exports.py
 
 5. 附件失败不一定是本地错误
 
-   HTTP 200 空附件和 HTML 错误页会进入重试；达到上限后才记录为源站内容失败。
+   HTTP 200 空附件、HTML 错误页和超出 `CSRC_MAX_DOWNLOAD_BYTES` 的响应不会落盘为有效附件；达到上限后才记录为源站内容失败。
 
-6. 数据不是法律意见
+6. AMAC TLS 策略
+
+   AMAC 请求默认校验 HTTPS 证书。仅在明确知道证书环境异常时使用 `python amac_crawl.py --amac-insecure-tls` 临时关闭；该策略会写入 AMAC manifest。
+
+7. 数据不是法律意见
 
    本项目保存官方来源和抓取时间，仍应在正式使用前回到官方页面核验时效性、完整性和效力状态。
 
@@ -303,6 +408,7 @@ OUTPUT_DIR/
     ├── coverage_gaps.json
     ├── assets_manifest.json
     ├── assets_failures.json
+    ├── relation_viewer/index.html
     └── review_queue.json
 ```
 
@@ -338,6 +444,8 @@ OUTPUT_DIR/
 - `publishes`：公告到正式附件文件。
 
 组件级关系只存在于 `work/relations/`，不作为正式消费入口。
+
+需要人工巡检关系质量时，可以运行 `python relation_viewer.py`，从正式关系图导出本地静态查看器到 `reports/relation_viewer/index.html`。查看器只消费 `canonical/relations/graph.json`、`canonical/json/` 和 `canonical/indexes/source_map.json`，不改变正式关系图。
 
 ### 清洗法规
 
@@ -386,6 +494,7 @@ OUTPUT_DIR/
 | [export_markdown_laws.py](export_markdown_laws.py) | NERIS 法规 Markdown 导出 |
 | [export_markdown_catalog.py](export_markdown_catalog.py) | 统一目录 Markdown 导出 |
 | [build_canonical_relations.py](build_canonical_relations.py) | 合并唯一正式关系图 |
+| [relation_viewer.py](relation_viewer.py) | 导出关系图本地静态查看器 |
 | [migrate_strict_layout.py](migrate_strict_layout.py) | 严格目录迁移和旧派生清理 |
 | [coverage_gaps.py](coverage_gaps.py) | 正文、附件和系列覆盖缺口检测 |
 
