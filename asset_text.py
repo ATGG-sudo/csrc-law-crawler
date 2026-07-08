@@ -5,12 +5,17 @@ from __future__ import annotations
 
 import io
 import re
+import shutil
+import subprocess
+import tempfile
+import zipfile
 from pathlib import Path
+import xml.etree.ElementTree as ET
 
 from parser import repair_known_neris_mojibake
 
 
-TEXT_ASSET_SUFFIXES = {".pdf", ".docx", ".txt"}
+TEXT_ASSET_SUFFIXES = {".doc", ".docx", ".pdf", ".txt", ".xlsx"}
 PAGE_NUMBER_LINE_RE = re.compile(r"\d{1,4}")
 
 
@@ -70,6 +75,116 @@ def _decode_text_bytes(data: bytes) -> str:
     return data.decode("utf-8", errors="replace")
 
 
+def _xml_local_name(tag: str) -> str:
+    return tag.rsplit("}", 1)[-1]
+
+
+def _xml_text(element: ET.Element) -> str:
+    return "".join(node.text or "" for node in element.iter() if _xml_local_name(node.tag) == "t")
+
+
+def _extract_xlsx_text(data: bytes) -> str:
+    with zipfile.ZipFile(io.BytesIO(data)) as workbook:
+        names = set(workbook.namelist())
+        shared_strings: list[str] = []
+        if "xl/sharedStrings.xml" in names:
+            root = ET.fromstring(workbook.read("xl/sharedStrings.xml"))
+            shared_strings = [
+                _xml_text(item) for item in root.iter() if _xml_local_name(item.tag) == "si"
+            ]
+
+        rows: list[str] = []
+        sheets = sorted(
+            name for name in names if name.startswith("xl/worksheets/") and name.endswith(".xml")
+        )
+        for sheet in sheets:
+            root = ET.fromstring(workbook.read(sheet))
+            for row in root.iter():
+                if _xml_local_name(row.tag) != "row":
+                    continue
+                values: list[str] = []
+                for cell in row:
+                    if _xml_local_name(cell.tag) != "c":
+                        continue
+                    cell_type = cell.attrib.get("t")
+                    if cell_type == "inlineStr":
+                        value = _xml_text(cell)
+                    else:
+                        value = next(
+                            (
+                                node.text or ""
+                                for node in cell.iter()
+                                if _xml_local_name(node.tag) == "v"
+                            ),
+                            "",
+                        )
+                        if cell_type == "s" and value.isdigit():
+                            index = int(value)
+                            value = shared_strings[index] if index < len(shared_strings) else ""
+                    if value.strip():
+                        values.append(value.strip())
+                if values:
+                    rows.append(" ".join(values))
+        return _clean_extracted_text("\n".join(rows))
+
+
+def _extract_doc_with_command(path: Path, command: str) -> str:
+    executable = shutil.which(command)
+    if not executable:
+        return ""
+    try:
+        result = subprocess.run(
+            [executable, str(path)],
+            capture_output=True,
+            check=False,
+            timeout=60,
+        )
+    except Exception:
+        return ""
+    if result.returncode != 0 or not result.stdout:
+        return ""
+    return _clean_extracted_text(_decode_text_bytes(result.stdout))
+
+
+def _extract_doc_with_soffice(path: Path) -> str:
+    executable = shutil.which("soffice") or shutil.which("libreoffice")
+    if not executable:
+        return ""
+    with tempfile.TemporaryDirectory() as temp:
+        out_dir = Path(temp)
+        try:
+            result = subprocess.run(
+                [
+                    executable,
+                    "--headless",
+                    "--convert-to",
+                    "txt:Text",
+                    "--outdir",
+                    str(out_dir),
+                    str(path),
+                ],
+                capture_output=True,
+                check=False,
+                timeout=120,
+            )
+        except Exception:
+            return ""
+        if result.returncode != 0:
+            return ""
+        text_files = sorted(out_dir.glob("*.txt"))
+        if not text_files:
+            return ""
+        return _clean_extracted_text(_decode_text_bytes(text_files[0].read_bytes()))
+
+
+def _extract_doc_text(path: Path) -> str:
+    for command in ("antiword", "catdoc"):
+        text = _extract_doc_with_command(path, command)
+        if text:
+            return text
+    return _extract_doc_with_soffice(path)
+
+
 def extract_asset_text_bytes(data: bytes, suffix: str) -> str:
     suffix = suffix.lower()
     try:
@@ -89,6 +204,13 @@ def extract_asset_text_bytes(data: bytes, suffix: str) -> str:
             )
         if suffix == ".txt":
             return _clean_extracted_text(_decode_text_bytes(data))
+        if suffix == ".xlsx":
+            return _extract_xlsx_text(data)
+        if suffix == ".doc":
+            with tempfile.TemporaryDirectory() as temp:
+                path = Path(temp) / "asset.doc"
+                path.write_bytes(data)
+                return _extract_doc_text(path)
     except Exception:
         return ""
     return ""
@@ -100,4 +222,6 @@ def extract_local_asset_text(path: Path) -> str:
     suffix = path.suffix.lower()
     if suffix not in TEXT_ASSET_SUFFIXES:
         return ""
+    if suffix == ".doc":
+        return _extract_doc_text(path)
     return extract_asset_text_bytes(path.read_bytes(), suffix)

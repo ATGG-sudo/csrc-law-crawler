@@ -1,10 +1,13 @@
 from __future__ import annotations
 
 import base64
+import io
 import importlib.util
 import json
+import os
 import tempfile
 import unittest
+import zipfile
 from pathlib import Path
 from typing import Any, cast
 from unittest.mock import patch
@@ -445,7 +448,7 @@ class CatalogMatchingTests(unittest.TestCase):
         self.assertEqual("第一条 制度正文。", text)
         extract_text.assert_called_once()
 
-    def test_asset_text_fallback_does_not_override_non_rules_or_existing_text(
+    def test_asset_text_fallback_does_not_override_existing_text(
         self,
     ) -> None:
         with patch(
@@ -460,15 +463,40 @@ class CatalogMatchingTests(unittest.TestCase):
                     "raw/assets/rule.pdf",
                 ),
             )
-            self.assertEqual(
-                "",
-                _record_plain_text(
-                    {"document_type": "supporting_material"},
-                    "",
-                    "raw/assets/template.pdf",
-                ),
-            )
         extract_text.assert_not_called()
+
+    def test_metadata_only_supporting_material_reads_text_from_local_asset(
+        self,
+    ) -> None:
+        with patch(
+            "build_catalog.extract_local_asset_text",
+            return_value="第一条 支持材料正文。",
+        ) as extract_text:
+            text = _record_plain_text(
+                {"document_type": "supporting_material"},
+                "",
+                "raw/assets/template.xlsx",
+            )
+
+        self.assertEqual("第一条 支持材料正文。", text)
+        extract_text.assert_called_once()
+
+    def test_low_signal_rule_text_reads_text_from_local_asset(self) -> None:
+        with patch(
+            "build_catalog.extract_local_asset_text",
+            return_value="第一条 附件制度正文。",
+        ) as extract_text:
+            text = _record_plain_text(
+                {
+                    "document_type": "self_regulatory_rule",
+                    "name": "《期货经纪合同》指引",
+                },
+                "《期货经纪合同》指引\n\n详细见附件",
+                "raw/assets/rule.doc",
+            )
+
+        self.assertEqual("第一条 附件制度正文。", text)
+        extract_text.assert_called_once()
 
 
 class PipelineRunnerTests(unittest.TestCase):
@@ -701,6 +729,49 @@ class GoldenFixtureTests(unittest.TestCase):
         text = extract_asset_text_bytes(data, ".pdf")
 
         self.assertIsInstance(text, str)
+
+    def test_xlsx_asset_extracts_shared_strings(self) -> None:
+        data = io.BytesIO()
+        with zipfile.ZipFile(data, "w") as workbook:
+            workbook.writestr(
+                "xl/sharedStrings.xml",
+                """
+                <sst xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">
+                  <si><t>第一条 XLSX制度正文。</t></si>
+                  <si><t>第二条 继续内容。</t></si>
+                </sst>
+                """,
+            )
+            workbook.writestr(
+                "xl/worksheets/sheet1.xml",
+                """
+                <worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">
+                  <sheetData>
+                    <row><c t="s"><v>0</v></c></row>
+                    <row><c t="s"><v>1</v></c></row>
+                  </sheetData>
+                </worksheet>
+                """,
+            )
+
+        text = extract_asset_text_bytes(data.getvalue(), ".xlsx")
+
+        self.assertIn("第一条 XLSX制度正文。", text)
+        self.assertIn("第二条 继续内容。", text)
+
+    def test_doc_asset_uses_available_external_converter(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            antiword = Path(temp) / "antiword"
+            antiword.write_text(
+                "#!/bin/sh\nprintf '第一条 DOC制度正文。\\n第二条 继续内容。\\n'\n",
+                encoding="utf-8",
+            )
+            antiword.chmod(0o755)
+            with patch.dict(os.environ, {"PATH": f"{temp}:{os.environ.get('PATH', '')}"}):
+                text = extract_asset_text_bytes(b"legacy-doc-bytes", ".doc")
+
+        self.assertIn("第一条 DOC制度正文。", text)
+        self.assertIn("第二条 继续内容。", text)
 
 
 class CatalogNormalizationTests(unittest.TestCase):

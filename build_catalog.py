@@ -64,6 +64,10 @@ SPACE_PUNCT_RE = re.compile(r"[\s\u3000·•,，。；;:：()（）\[\]【】《
 ATTACHMENT_PREFIX_RE = re.compile(r"^附件(?:\s*\d+(?:-\d+)?)?\s*[：:、.\-]?\s*")
 FILE_SUFFIX_RE = re.compile(r"\.(pdf|docx?|xlsx?|zip|rar|rtf|wps)$", re.I)
 TRIAL_MARKER_RE = re.compile(r"[（(]\s*试行\s*[）)]|试行")
+ATTACHMENT_TEXT_SIGNAL_RE = re.compile(
+    r"(?:详[细情]?见附件|详情请(?:查看)?附件|全文详见附件|见附件|附件下载|相关文档)"
+)
+SECTION_TOKEN_RE = re.compile(r"第[一二三四五六七八九十百千零〇0-9]+[条章节编款项部分]")
 
 KNOWN_SUCCESSOR_CHAINS: tuple[dict[str, Any], ...] = (
     {
@@ -315,18 +319,26 @@ def _is_official_rule_entity(entity: dict[str, Any]) -> bool:
     return document_type in OFFICIAL_RULE_TYPES
 
 
-def _is_official_rule_metadata(metadata: dict[str, Any]) -> bool:
-    document_type = str(metadata.get("document_type") or "")
-    return document_type in OFFICIAL_RULE_TYPES
-
-
 def _asset_text_fallback(metadata: dict[str, Any], local_file: Any) -> str:
-    if not _is_official_rule_metadata(metadata):
-        return ""
     local_file_text = str(local_file or "")
     if not local_file_text:
         return ""
     return extract_local_asset_text(output_path(local_file_text))
+
+
+def _low_signal_plain_text(metadata: dict[str, Any], text: str) -> bool:
+    compact = SPACE_PUNCT_RE.sub("", text)
+    if not compact:
+        return True
+    title = SPACE_PUNCT_RE.sub("", str(metadata.get("name") or ""))
+    remainder = compact.replace(title, "") if title else compact
+    remainder = ATTACHMENT_TEXT_SIGNAL_RE.sub("", remainder)
+    remainder = SECTION_TOKEN_RE.sub("", remainder)
+    if title and not remainder:
+        return True
+    if ATTACHMENT_TEXT_SIGNAL_RE.search(compact) and len(remainder) <= 30:
+        return True
+    return bool(title and title in compact and len(remainder) <= 8)
 
 
 def _record_plain_text(
@@ -335,9 +347,10 @@ def _record_plain_text(
     local_file: Any = None,
 ) -> str:
     text = repair_known_neris_mojibake(str(plain_text or ""))
-    if text.strip():
+    if text.strip() and not _low_signal_plain_text(metadata, text):
         return text
-    return _asset_text_fallback(metadata, local_file)
+    fallback = _asset_text_fallback(metadata, local_file)
+    return fallback if fallback else text
 
 
 def infer_trial_replacement_relations(
