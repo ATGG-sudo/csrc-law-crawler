@@ -99,7 +99,9 @@ def _format_paragraph(text: str) -> str:
         return text
     marker = match.group(1)
     remainder = text[match.end() :].lstrip()
-    return f"**{marker}** {remainder}".rstrip()
+    if not remainder:
+        return f"## {marker}"
+    return f"## {marker}\n\n{remainder}".rstrip()
 
 
 def _is_unfinished_paragraph(text: str) -> bool:
@@ -139,6 +141,7 @@ def plain_text_to_markdown(text: str, *, title: str = "") -> str:
             continue
         if (
             ARTICLE_RE.match(line)
+            and ARTICLE_RE.match(paragraph)
             and _is_unfinished_paragraph(paragraph)
             and not _matches_compact_title(paragraph, compact_title)
         ):

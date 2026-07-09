@@ -822,19 +822,19 @@ class CatalogNormalizationTests(unittest.TestCase):
             "第十九条 下一条内容。",
         )
         self.assertIn(
-            "**第十八条** 私募基金管理人应当按照《信息披露办法》第二十条以及本细则规定披露年度报告。",
+            "## 第十八条\n\n私募基金管理人应当按照《信息披露办法》第二十条以及本细则规定披露年度报告。",
             markdown,
         )
-        self.assertNotIn("**第二十条** 以及", markdown)
-        self.assertIn("**第十九条** 下一条内容。", markdown)
+        self.assertNotIn("## 第二十条", markdown)
+        self.assertIn("## 第十九条\n\n下一条内容。", markdown)
 
     def test_pdf_hard_wrap_is_reflowed_into_articles(self) -> None:
         markdown = plain_text_to_markdown(
             "1\n某规则\n第一条 这是第\n一段内容。\n第二条 这是第二条。",
             title="某规则",
         )
-        self.assertIn("**第一条** 这是第一段内容。", markdown)
-        self.assertIn("**第二条** 这是第二条。", markdown)
+        self.assertIn("## 第一条\n\n这是第一段内容。", markdown)
+        self.assertIn("## 第二条\n\n这是第二条。", markdown)
         self.assertNotIn("\n1\n", f"\n{markdown}\n")
 
     def test_chapter_line_becomes_markdown_heading(self) -> None:
@@ -843,10 +843,24 @@ class CatalogNormalizationTests(unittest.TestCase):
 
     def test_title_prefix_does_not_remove_same_line_body(self) -> None:
         markdown = plain_text_to_markdown(
-            "某规则第一条 内容。",
+            "某规则\n（2026年7月9日发布）\n第一条 内容。",
             title="某规则",
         )
-        self.assertIn("第一条 内容。", markdown)
+        self.assertIn("## 第一条\n\n内容。", markdown)
+
+    def test_preface_before_first_article_becomes_heading(self) -> None:
+        markdown = plain_text_to_markdown(
+            "中国证券投资基金业协会\n"
+            "律师事务所入会指引\n"
+            "（2020 年 3 月 24 日中国证券投资基金业协会第二届理事会\n"
+            "审议通过）\n"
+            "第一条 为了充分发挥律师维护法律法规正确实施的积极作用。\n"
+            "第二条 符合条件的律师事务所，可自愿申请加入协会。",
+            title="《律师事务所入会指引》",
+        )
+        self.assertIn("## 第一条\n\n为了充分发挥律师维护法律法规正确实施的积极作用。", markdown)
+        self.assertIn("## 第二条\n\n符合条件的律师事务所，可自愿申请加入协会。", markdown)
+        self.assertNotIn("**第", markdown)
 
     def test_amac_unknown_official_rule_defaults_to_current(self) -> None:
         effectiveness = effectiveness_for(
