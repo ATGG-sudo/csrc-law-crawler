@@ -421,7 +421,7 @@ class CatalogMatchingTests(unittest.TestCase):
         self,
     ) -> None:
         body = "第一条 同一制度正文。第二条 同一制度正文。" * 8
-        entities = {
+        entities: dict[str, dict[str, Any]] = {
             "law_keep": {
                 "id": "law_keep",
                 "title": "规则甲",
@@ -494,7 +494,7 @@ class CatalogMatchingTests(unittest.TestCase):
         )
 
     def test_catalog_dedupe_merges_same_asset_sha_equivalent_title(self) -> None:
-        entities = {
+        entities: dict[str, dict[str, Any]] = {
             "law_a": {
                 "id": "law_a",
                 "title": "1.集合资产管理计划合同指引（试行）",
@@ -556,7 +556,7 @@ class CatalogMatchingTests(unittest.TestCase):
             "现公布金融行业推荐性标准《上市公司行业统计分类与代码》（JR/T 0020-2024）、"
             "《证券基金经营机构运维自动化能力成熟度规范》（JR/T 0320-2024），自公布之日起施行。"
         )
-        entities = {
+        entities: dict[str, dict[str, Any]] = {
             "law_a": {
                 "id": "law_a",
                 "title": "上市公司行业统计分类与代码（JR/T 0020-2024）",
