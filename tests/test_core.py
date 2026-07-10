@@ -24,6 +24,7 @@ from asset_text import extract_asset_text_bytes
 from build_catalog import (
     _build_catalog_relations,
     _catalog_manifest_items,
+    deduplicate_catalog_entities,
     _record_plain_text,
     _review_queue_items,
     _seed_neris_entities,
@@ -416,6 +417,203 @@ class CatalogMatchingTests(unittest.TestCase):
             source_to_entity[("neris", "n2")],
         )
 
+    def test_catalog_dedupe_merges_same_title_same_body_and_preserves_sources(
+        self,
+    ) -> None:
+        body = "第一条 同一制度正文。第二条 同一制度正文。" * 8
+        entities = {
+            "law_keep": {
+                "id": "law_keep",
+                "title": "规则甲",
+                "metadata": {"name": "规则甲", "fileno": "证监会公告〔2026〕1号"},
+                "preferred_content": {
+                    "source_system": "neris",
+                    "source_record_id": "n1",
+                    "plain_text": body,
+                },
+                "sources": [
+                    {
+                        "system": "neris",
+                        "record_id": "n1",
+                        "role": "official_text",
+                    }
+                ],
+            },
+            "law_remove": {
+                "id": "law_remove",
+                "title": "规则甲",
+                "metadata": {"name": "规则甲"},
+                "preferred_content": {
+                    "source_system": "amac",
+                    "source_record_id": "a1",
+                    "plain_text": body,
+                },
+                "sources": [
+                    {
+                        "system": "amac",
+                        "record_id": "a1",
+                        "role": "official_text",
+                    }
+                ],
+            },
+        }
+        source_to_entity = {
+            ("neris", "n1"): "law_keep",
+            ("amac", "a1"): "law_remove",
+        }
+        matches = {"a1": {"canonical_id": "law_remove"}}
+
+        result = deduplicate_catalog_entities(entities, source_to_entity, matches)
+
+        self.assertEqual(["law_keep"], sorted(entities))
+        self.assertEqual("law_keep", source_to_entity[("amac", "a1")])
+        self.assertEqual("law_keep", matches["a1"]["canonical_id"])
+        self.assertEqual(
+            ["n1", "a1"], [source["record_id"] for source in entities["law_keep"]["sources"]]
+        )
+        self.assertEqual(
+            [
+                {
+                    "canonical_id": "law_remove",
+                    "title": "规则甲",
+                    "reason": "same_body_equivalent_title",
+                }
+            ],
+            entities["law_keep"]["metadata"]["merged_catalog_entities"],
+        )
+        self.assertEqual(
+            [
+                {
+                    "removed_id": "law_remove",
+                    "kept_id": "law_keep",
+                    "reason": "same_body_equivalent_title",
+                    "source_records": ["amac:a1"],
+                }
+            ],
+            result["merged_entities"],
+        )
+
+    def test_catalog_dedupe_merges_same_asset_sha_equivalent_title(self) -> None:
+        entities = {
+            "law_a": {
+                "id": "law_a",
+                "title": "1.集合资产管理计划合同指引（试行）",
+                "metadata": {"name": "1.集合资产管理计划合同指引（试行）"},
+                "preferred_content": {"plain_text": "正文甲"},
+                "assets": [{"sha256": "same"}],
+                "sources": [{"system": "amac", "record_id": "a1"}],
+            },
+            "law_b": {
+                "id": "law_b",
+                "title": "集合资产管理计划合同指引",
+                "metadata": {"name": "集合资产管理计划合同指引"},
+                "preferred_content": {"plain_text": "正文乙更长"},
+                "assets": [{"sha256": "same"}],
+                "sources": [{"system": "amac", "record_id": "a2"}],
+            },
+        }
+        source_to_entity = {("amac", "a1"): "law_a", ("amac", "a2"): "law_b"}
+
+        result = deduplicate_catalog_entities(entities, source_to_entity, {})
+
+        self.assertEqual(1, len(entities))
+        kept_id = next(iter(entities))
+        self.assertEqual(kept_id, source_to_entity[("amac", "a1")])
+        self.assertEqual(kept_id, source_to_entity[("amac", "a2")])
+        self.assertEqual("same_asset_equivalent_title", result["merged_entities"][0]["reason"])
+
+    def test_catalog_dedupe_sees_seeded_record_assets(self) -> None:
+        neris_records: list[dict[str, Any]] = [
+            {
+                "system": "neris",
+                "record_id": "n1",
+                "metadata": {"name": "1.规则甲（试行）"},
+                "plain_text": "正文甲",
+                "assets": [{"sha256": "same", "label": "附件"}],
+            },
+            {
+                "system": "neris",
+                "record_id": "n2",
+                "metadata": {"name": "规则甲"},
+                "plain_text": "正文乙更长",
+                "assets": [{"sha256": "same", "label": "附件"}],
+            },
+        ]
+        entities, source_to_entity, _ = _seed_neris_entities(neris_records)
+
+        result = deduplicate_catalog_entities(entities, source_to_entity, {})
+
+        self.assertEqual(1, len(entities))
+        kept_id = next(iter(entities))
+        self.assertEqual(kept_id, source_to_entity[("neris", "n1")])
+        self.assertEqual(kept_id, source_to_entity[("neris", "n2")])
+        self.assertEqual("same_asset_equivalent_title", result["merged_entities"][0]["reason"])
+
+    def test_catalog_dedupe_repairs_multi_document_announcement_without_merging(
+        self,
+    ) -> None:
+        body = (
+            "现公布金融行业推荐性标准《上市公司行业统计分类与代码》（JR/T 0020-2024）、"
+            "《证券基金经营机构运维自动化能力成熟度规范》（JR/T 0320-2024），自公布之日起施行。"
+        )
+        entities = {
+            "law_a": {
+                "id": "law_a",
+                "title": "上市公司行业统计分类与代码（JR/T 0020-2024）",
+                "metadata": {"name": "上市公司行业统计分类与代码（JR/T 0020-2024）"},
+                "preferred_content": {"plain_text": body},
+                "sources": [{"system": "neris", "record_id": "n1"}],
+            },
+            "law_b": {
+                "id": "law_b",
+                "title": "证券基金经营机构运维自动化能力成熟度规范（JR/T 0320-2024）",
+                "metadata": {"name": "证券基金经营机构运维自动化能力成熟度规范（JR/T 0320-2024）"},
+                "preferred_content": {"plain_text": body},
+                "sources": [{"system": "neris", "record_id": "n2"}],
+            },
+        }
+        source_to_entity = {("neris", "n1"): "law_a", ("neris", "n2"): "law_b"}
+
+        result = deduplicate_catalog_entities(entities, source_to_entity, {})
+
+        self.assertEqual(["law_a", "law_b"], sorted(entities))
+        self.assertEqual("", entities["law_a"]["preferred_content"]["plain_text"])
+        self.assertEqual("", entities["law_b"]["preferred_content"]["plain_text"])
+        self.assertEqual("multi_document_announcement_body", result["content_repairs"][0]["reason"])
+
+    def test_catalog_dedupe_keeps_same_title_different_body_separate(self) -> None:
+        entities = {
+            "law_a": {
+                "id": "law_a",
+                "title": "规则甲",
+                "metadata": {
+                    "name": "规则甲",
+                    "fileno": "证监会公告〔2026〕1号",
+                    "pub_date": "2026-01-01",
+                },
+                "preferred_content": {"plain_text": "第一条 甲。" * 20},
+                "sources": [{"system": "neris", "record_id": "n1"}],
+            },
+            "law_b": {
+                "id": "law_b",
+                "title": "规则甲",
+                "metadata": {
+                    "name": "规则甲",
+                    "fileno": "证监会公告〔2026〕2号",
+                    "pub_date": "2026-02-01",
+                },
+                "preferred_content": {"plain_text": "第一条 乙。" * 20},
+                "sources": [{"system": "neris", "record_id": "n2"}],
+            },
+        }
+        source_to_entity = {("neris", "n1"): "law_a", ("neris", "n2"): "law_b"}
+
+        result = deduplicate_catalog_entities(entities, source_to_entity, {})
+
+        self.assertEqual(["law_a", "law_b"], sorted(entities))
+        self.assertEqual([], result["merged_entities"])
+        self.assertEqual([], result["content_repairs"])
+
     def test_unique_title_match_with_richer_assets_is_supplemental(self) -> None:
         neris: dict[str, Any] = {
             "record_id": "n1",
@@ -714,9 +912,7 @@ class GoldenFixtureTests(unittest.TestCase):
     def test_docx_asset_fixture_extracts_clean_text_when_dependency_exists(self) -> None:
         if importlib.util.find_spec("docx") is None:
             self.skipTest("python-docx is not installed")
-        data = base64.b64decode(
-            (FIXTURES / "assets" / "sample_rule.docx.b64").read_text().strip()
-        )
+        data = base64.b64decode((FIXTURES / "assets" / "sample_rule.docx.b64").read_text().strip())
         text = extract_asset_text_bytes(data, ".docx")
 
         self.assertIn("第一条 DOCX制度正文。", text)
@@ -796,7 +992,9 @@ class CatalogNormalizationTests(unittest.TestCase):
             ],
         )
 
-        self.assertEqual("某规则\n\n总则前言\n\n第一章\n\n第一条 内容。\n\n第一项\n\n项目内容。\n\n附则", plain)
+        self.assertEqual(
+            "某规则\n\n总则前言\n\n第一章\n\n第一条 内容。\n\n第一项\n\n项目内容。\n\n附则", plain
+        )
         self.assertIn("## 第一章", markdown)
         self.assertIn("### 第一项", markdown)
 
@@ -889,9 +1087,7 @@ class CatalogNormalizationTests(unittest.TestCase):
                 "document_type": "self_regulatory_rule",
                 "status": "unknown",
                 "preferred_content": {"source_system": "amac"},
-                "metadata": {
-                    "name": "关于证券投资基金宣传推介材料监管事项的补充规定【已废止】"
-                },
+                "metadata": {"name": "关于证券投资基金宣传推介材料监管事项的补充规定【已废止】"},
             }
         )
         self.assertEqual("historical", effectiveness["status"])
@@ -904,9 +1100,7 @@ class CatalogNormalizationTests(unittest.TestCase):
                 "document_type": "regulation",
                 "status": "现行有效",
                 "preferred_content": {"source_system": "neris"},
-                "metadata": {
-                    "name": "上海证券交易所股票上市规则（2022年1月修订）"
-                },
+                "metadata": {"name": "上海证券交易所股票上市规则（2022年1月修订）"},
             },
             superseded_by=[
                 {
@@ -960,9 +1154,7 @@ class CatalogNormalizationTests(unittest.TestCase):
                     "source_system": "amac",
                     "plain_text": "公开征求意见。",
                 },
-                "metadata": {
-                    "name": "私募投资基金信息披露实施细则（征求意见稿）"
-                },
+                "metadata": {"name": "私募投资基金信息披露实施细则（征求意见稿）"},
             }
         )
         self.assertEqual("not_applicable", effectiveness["status"])
@@ -977,9 +1169,7 @@ class CatalogNormalizationTests(unittest.TestCase):
                 "document_type": "self_regulatory_rule",
                 "status": "unknown",
                 "preferred_content": {"source_system": "amac"},
-                "metadata": {
-                    "name": "基金投资者风险测评问卷参考模板（个人版）"
-                },
+                "metadata": {"name": "基金投资者风险测评问卷参考模板（个人版）"},
             }
         )
         self.assertEqual("not_applicable", effectiveness["status"])
@@ -1076,10 +1266,7 @@ class CatalogNormalizationTests(unittest.TestCase):
         )
         self.assertIn(
             ("law_2022", "law_2020", "supersedes"),
-            [
-                (item["from"], item["to"], item["relation"])
-                for item in relations
-            ],
+            [(item["from"], item["to"], item["relation"]) for item in relations],
         )
 
     def test_duplicate_assets_merge_by_sha256_with_source_evidence(self) -> None:
@@ -1143,9 +1330,7 @@ class AmacDiscoveryTests(unittest.TestCase):
 
     def test_xwfb_rule_notice_title_filter_targets_rule_publications(self) -> None:
         self.assertTrue(
-            is_xwfb_rule_notice_title(
-                "关于发布《公开募集证券投资基金主题投资风格管理指引》的公告"
-            )
+            is_xwfb_rule_notice_title("关于发布《公开募集证券投资基金主题投资风格管理指引》的公告")
         )
         self.assertTrue(
             is_xwfb_rule_notice_title(
@@ -1153,9 +1338,7 @@ class AmacDiscoveryTests(unittest.TestCase):
             )
         )
         self.assertFalse(
-            is_xwfb_rule_notice_title(
-                "关于举办《私募投资基金登记备案办法》解读直播培训的通知"
-            )
+            is_xwfb_rule_notice_title("关于举办《私募投资基金登记备案办法》解读直播培训的通知")
         )
 
     def test_site_discovery_paginates_keyword_results(self) -> None:
@@ -1818,9 +2001,7 @@ class SafetyTests(unittest.TestCase):
         )
         self.assertEqual(
             "reference",
-            bucket_for_document(
-                {"effectiveness": {"status": "not_applicable"}}
-            ),
+            bucket_for_document({"effectiveness": {"status": "not_applicable"}}),
         )
 
     def test_pass2_failure_keeps_published_graph_unchanged(self) -> None:

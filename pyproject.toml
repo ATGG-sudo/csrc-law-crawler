@@ -31,6 +31,7 @@ packages = [
 py-modules = [
   "amac_crawl",
   "api",
+  "audit_canonical_duplicates",
   "asset_text",
   "build_canonical_relations",
   "build_catalog",

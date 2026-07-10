@@ -53,6 +53,7 @@ from storage import (
     output_path,
     relative_to_output,
     run_with_output_lock,
+    save_json,
     source_matches_path,
     reports_dir,
     utc_now_iso,
@@ -64,10 +65,13 @@ SPACE_PUNCT_RE = re.compile(r"[\s\u3000·•,，。；;:：()（）\[\]【】《
 ATTACHMENT_PREFIX_RE = re.compile(r"^附件(?:\s*\d+(?:-\d+)?)?\s*[：:、.\-]?\s*")
 FILE_SUFFIX_RE = re.compile(r"\.(pdf|docx?|xlsx?|zip|rar|rtf|wps)$", re.I)
 TRIAL_MARKER_RE = re.compile(r"[（(]\s*试行\s*[）)]|试行")
+REVISION_MARKER_RE = re.compile(r"[（(]\s*(?:\d{4}年)?修订\s*[）)]")
+LEADING_ITEM_MARKER_RE = re.compile(r"^\s*\d+(?:[-.、．]\d+)?[-.、．]?\s*")
 ATTACHMENT_TEXT_SIGNAL_RE = re.compile(
     r"(?:详[细情]?见附件|详情请(?:查看)?附件|全文详见附件|见附件|附件下载|相关文档)"
 )
 SECTION_TOKEN_RE = re.compile(r"第[一二三四五六七八九十百千零〇0-9]+[条章节编款项部分]")
+DEDUP_MIN_BODY_CHARS = 80
 
 KNOWN_SUCCESSOR_CHAINS: tuple[dict[str, Any], ...] = (
     {
@@ -75,11 +79,21 @@ KNOWN_SUCCESSOR_CHAINS: tuple[dict[str, Any], ...] = (
         "official_url": "https://www.sse.com.cn/lawandrules/sselawsrules2025/stocks/mainipo/c/c_20260424_10816589.shtml",
         "items": (
             {"title": "上海证券交易所股票上市规则", "fileno": "上证发〔2014〕65号"},
-            {"title": "上海证券交易所股票上市规则（2018年11月修订）", "fileno": "上证发〔2018〕97号"},
+            {
+                "title": "上海证券交易所股票上市规则（2018年11月修订）",
+                "fileno": "上证发〔2018〕97号",
+            },
             {"title": "上海证券交易所股票上市规则（2019年修订）", "fileno": ""},
-            {"title": "上海证券交易所股票上市规则（2020年12月修订）", "fileno": "上证发〔2020〕100号"},
+            {
+                "title": "上海证券交易所股票上市规则（2020年12月修订）",
+                "fileno": "上证发〔2020〕100号",
+            },
             {"title": "上海证券交易所股票上市规则（2022年1月修订）", "fileno": "上证发〔2022〕1号"},
-            {"external_id": "external:sse:main-listing-rules-2026", "title": "上海证券交易所股票上市规则（2026年4月修订）", "fileno": "上证发〔2026〕42号"},
+            {
+                "external_id": "external:sse:main-listing-rules-2026",
+                "title": "上海证券交易所股票上市规则（2026年4月修订）",
+                "fileno": "上证发〔2026〕42号",
+            },
         ),
     },
     {
@@ -87,8 +101,15 @@ KNOWN_SUCCESSOR_CHAINS: tuple[dict[str, Any], ...] = (
         "official_url": "https://www.sse.com.cn/lawandrules/sselawsrules2025/stocks/staripo/c/c_20260424_10816592.shtml",
         "items": (
             {"title": "上海证券交易所科创板股票上市规则", "fileno": "上证发〔2019〕53号"},
-            {"title": "上海证券交易所科创板股票上市规则（2020年12月修订）", "fileno": "上证发〔2020〕101号"},
-            {"external_id": "external:sse:star-listing-rules-2026", "title": "上海证券交易所科创板股票上市规则（2026年4月修订）", "fileno": "上证发〔2026〕43号"},
+            {
+                "title": "上海证券交易所科创板股票上市规则（2020年12月修订）",
+                "fileno": "上证发〔2020〕101号",
+            },
+            {
+                "external_id": "external:sse:star-listing-rules-2026",
+                "title": "上海证券交易所科创板股票上市规则（2026年4月修订）",
+                "fileno": "上证发〔2026〕43号",
+            },
         ),
     },
     {
@@ -96,32 +117,59 @@ KNOWN_SUCCESSOR_CHAINS: tuple[dict[str, Any], ...] = (
         "official_url": "https://www.sse.com.cn/lawandrules/sselawsrules/repeal/rules/c/c_20210531_5478071.shtml",
         "items": (
             {"title": "上海证券交易所退市公司重新上市实施办法", "fileno": "上证发〔2015〕21号"},
-            {"title": "上海证券交易所退市公司重新上市实施办法（2018年11月修订）", "fileno": "上证发〔2018〕99号"},
-            {"external_id": "external:sse:relisting-rules-repealed", "title": "上海证券交易所退市公司重新上市实施办法（已失效）", "fileno": ""},
+            {
+                "title": "上海证券交易所退市公司重新上市实施办法（2018年11月修订）",
+                "fileno": "上证发〔2018〕99号",
+            },
+            {
+                "external_id": "external:sse:relisting-rules-repealed",
+                "title": "上海证券交易所退市公司重新上市实施办法（已失效）",
+                "fileno": "",
+            },
         ),
     },
     {
         "source": "official.dce.abnormal_trading_rules",
         "official_url": "https://www.dce.com.cn/dalianshangpin/ywfw/jystz/ywtz/6297862/index.html",
         "items": (
-            {"title": "大连商品交易所异常交易管理办法（试行）（2018年修订）", "fileno": "大商所发〔2018〕111号"},
-            {"external_id": "external:dce:abnormal-trading-behavior-rules-2021", "title": "大连商品交易所异常交易行为管理办法", "fileno": "〔2021〕61号"},
+            {
+                "title": "大连商品交易所异常交易管理办法（试行）（2018年修订）",
+                "fileno": "大商所发〔2018〕111号",
+            },
+            {
+                "external_id": "external:dce:abnormal-trading-behavior-rules-2021",
+                "title": "大连商品交易所异常交易行为管理办法",
+                "fileno": "〔2021〕61号",
+            },
         ),
     },
     {
         "source": "official.dce.abnormal_trading_standards",
         "official_url": "https://www.dce.com.cn/dalianshangpin/ywfw/jystz/ywtz/6297862/index.html",
         "items": (
-            {"title": "《大连商品交易所异常交易管理办法（试行）》有关监管标准及处理程序", "fileno": "大商所发〔2018〕154号"},
-            {"title": "《大连商品交易所异常交易管理办法（试行）》有关监管标准及处理程序", "fileno": "大商所发〔2021〕73号"},
-            {"external_id": "external:dce:abnormal-trading-behavior-rules-2021", "title": "大连商品交易所异常交易行为管理办法", "fileno": "〔2021〕61号"},
+            {
+                "title": "《大连商品交易所异常交易管理办法（试行）》有关监管标准及处理程序",
+                "fileno": "大商所发〔2018〕154号",
+            },
+            {
+                "title": "《大连商品交易所异常交易管理办法（试行）》有关监管标准及处理程序",
+                "fileno": "大商所发〔2021〕73号",
+            },
+            {
+                "external_id": "external:dce:abnormal-trading-behavior-rules-2021",
+                "title": "大连商品交易所异常交易行为管理办法",
+                "fileno": "〔2021〕61号",
+            },
         ),
     },
     {
         "source": "official.dce.hedging_rules",
         "official_url": "https://www.dce.com.cn/dalianshangpin/fgfz/6142914/6142922/6231266/index.html",
         "items": (
-            {"title": "大连商品交易所套期保值管理办法（2018年4月修订）", "fileno": "大商所发〔2018〕154号"},
+            {
+                "title": "大连商品交易所套期保值管理办法（2018年4月修订）",
+                "fileno": "大商所发〔2018〕154号",
+            },
             {"title": "大连商品交易所套期保值管理办法", "fileno": "〔2022〕98号"},
         ),
     },
@@ -192,6 +240,10 @@ def _source_descriptor(
     }
 
 
+def _record_assets(record: dict[str, Any]) -> list[dict[str, Any]]:
+    return [dict(asset) for asset in record.get("assets") or []]
+
+
 def _neris_records() -> list[dict[str, Any]]:
     records = []
     for path in iter_reg_law_files():
@@ -208,9 +260,7 @@ def _neris_records() -> list[dict[str, Any]]:
                 "local_file": relative_to_output(path),
                 "page_url": (doc.get("source") or {}).get("detail_url"),
                 "assets": (
-                    attachment_index.get("attachments")
-                    or doc.get("source_attachments")
-                    or []
+                    attachment_index.get("attachments") or doc.get("source_attachments") or []
                 ),
             }
         )
@@ -242,9 +292,7 @@ def _amac_records() -> list[dict[str, Any]]:
             attachment_id = str(attachment.get("source_record_id") or "")
             if not attachment_id:
                 continue
-            attachment_metadata = _repair_text_fields(
-                dict(attachment.get("metadata") or {})
-            )
+            attachment_metadata = _repair_text_fields(dict(attachment.get("metadata") or {}))
             parent_metadata = _repair_text_fields(doc.get("metadata") or {})
             if attachment_metadata.get("status") in {None, "", "unknown"}:
                 parent_status = parent_metadata.get("status")
@@ -284,12 +332,7 @@ def _date_distance(left: Any, right: Any) -> int | None:
     try:
         from datetime import date
 
-        return abs(
-            (
-                date.fromisoformat(str(left)[:10])
-                - date.fromisoformat(str(right)[:10])
-            ).days
-        )
+        return abs((date.fromisoformat(str(left)[:10]) - date.fromisoformat(str(right)[:10])).days)
     except (TypeError, ValueError):
         return None
 
@@ -367,9 +410,7 @@ def infer_trial_replacement_relations(
     relations: list[dict[str, Any]] = []
     for trial_id, trial_entity in entities.items():
         trial_title = str(trial_entity.get("title") or "")
-        if not is_trial_title(trial_title) or not _is_official_rule_entity(
-            trial_entity
-        ):
+        if not is_trial_title(trial_title) or not _is_official_rule_entity(trial_entity):
             continue
         trial_date = _pub_date_value(trial_entity)
         if trial_date is None:
@@ -405,13 +446,9 @@ def infer_trial_replacement_relations(
                     "inference": "later_same_title_formal_rule_replaces_trial_rule",
                     "normalized_title": trial_key,
                     "trial_title": trial_title,
-                    "trial_pub_date": (trial_entity.get("metadata") or {}).get(
-                        "pub_date"
-                    ),
+                    "trial_pub_date": (trial_entity.get("metadata") or {}).get("pub_date"),
                     "formal_title": formal_entity.get("title"),
-                    "formal_pub_date": (formal_entity.get("metadata") or {}).get(
-                        "pub_date"
-                    ),
+                    "formal_pub_date": (formal_entity.get("metadata") or {}).get("pub_date"),
                 },
                 "confidence": TRIAL_REPLACEMENT.confidence,
             }
@@ -496,12 +533,17 @@ def choose_neris_match_with_rule(
         fileno_matches = [
             item
             for item in candidates
-            if normalize_fileno((item.get("metadata") or {}).get("fileno"))
-            == amac_fileno
+            if normalize_fileno((item.get("metadata") or {}).get("fileno")) == amac_fileno
         ]
         if len(fileno_matches) == 1:
             rule = MATCH_TITLE_FILENO
-            return fileno_matches[0], "same_document", rule.confidence, ["题名和文号一致"], rule.rule_id
+            return (
+                fileno_matches[0],
+                "same_document",
+                rule.confidence,
+                ["题名和文号一致"],
+                rule.rule_id,
+            )
 
     dated = []
     for item in candidates:
@@ -562,6 +604,7 @@ def _entity_from_record(record: dict[str, Any], entity_id: str) -> dict[str, Any
                 page_url=record.get("page_url"),
             )
         ],
+        "assets": _record_assets(record),
         "updated_at": utc_now_iso(),
     }
 
@@ -585,6 +628,7 @@ def _seed_neris_entities(
             entity_id = existing_entity_id
             entity = entities[entity_id]
             _append_record_source(entity, record, role="official_duplicate")
+            _append_record_assets(entity, record)
             _prefer_longer_record_content(entity, record)
             _append_neris_merge_metadata(entity, record)
         else:
@@ -686,6 +730,10 @@ def _append_record_source(
     )
 
 
+def _append_record_assets(entity: dict[str, Any], record: dict[str, Any]) -> None:
+    _append_unique_assets(entity, {"assets": _record_assets(record)})
+
+
 def _prefer_longer_record_content(
     entity: dict[str, Any],
     record: dict[str, Any],
@@ -698,6 +746,334 @@ def _prefer_longer_record_content(
             "source_record_id": record["record_id"],
             "plain_text": new_text,
         }
+
+
+def _compact_body_text(text: Any) -> str:
+    return re.sub(r"\s+", "", str(text or ""))
+
+
+def _body_hash(entity: dict[str, Any]) -> str:
+    text = _compact_body_text((entity.get("preferred_content") or {}).get("plain_text"))
+    if len(text) < DEDUP_MIN_BODY_CHARS:
+        return ""
+    return hashlib.sha256(text.encode("utf-8")).hexdigest()
+
+
+def _dedupe_title_key(value: Any) -> str:
+    text = clean_title(value)
+    text = LEADING_ITEM_MARKER_RE.sub("", text)
+    text = TRIAL_MARKER_RE.sub("", text)
+    text = REVISION_MARKER_RE.sub("", text)
+    return normalize_title(text)
+
+
+def _entity_dedupe_title_key(entity: dict[str, Any]) -> str:
+    metadata = entity.get("metadata") or {}
+    return _dedupe_title_key(metadata.get("name") or entity.get("title"))
+
+
+def _source_file_sha256(local_file: Any) -> str:
+    local_file_text = str(local_file or "")
+    if not local_file_text:
+        return ""
+    path = output_path(local_file_text)
+    if not path.exists() or not path.is_file() or path.suffix.lower() == ".json":
+        return ""
+    digest = hashlib.sha256()
+    with path.open("rb") as f:
+        for chunk in iter(lambda: f.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _entity_asset_shas(entity: dict[str, Any]) -> set[str]:
+    result = {
+        str(asset.get("sha256") or "")
+        for asset in entity.get("assets") or []
+        if asset.get("sha256")
+    }
+    for source in entity.get("sources") or []:
+        digest = _source_file_sha256(source.get("local_file"))
+        if digest:
+            result.add(digest)
+    return result
+
+
+def _entity_sources_key(source: dict[str, Any]) -> tuple[Any, ...]:
+    return (
+        source.get("system"),
+        source.get("record_id"),
+        source.get("role"),
+        source.get("local_file"),
+        source.get("page_url"),
+    )
+
+
+def _append_unique_sources(target: dict[str, Any], incoming: dict[str, Any]) -> None:
+    sources = target.setdefault("sources", [])
+    seen = {_entity_sources_key(source) for source in sources}
+    for source in incoming.get("sources") or []:
+        key = _entity_sources_key(source)
+        if key not in seen:
+            sources.append(source)
+            seen.add(key)
+
+
+def _append_unique_assets(target: dict[str, Any], incoming: dict[str, Any]) -> None:
+    assets = target.setdefault("assets", [])
+    seen = {
+        asset.get("sha256")
+        or asset.get("local_file")
+        or asset.get("source_url")
+        or asset.get("asset_id")
+        for asset in assets
+    }
+    for asset in incoming.get("assets") or []:
+        key = (
+            asset.get("sha256")
+            or asset.get("local_file")
+            or asset.get("source_url")
+            or asset.get("asset_id")
+        )
+        if key and key not in seen:
+            assets.append(asset)
+            seen.add(key)
+
+
+def _entity_completeness(entity: dict[str, Any]) -> int:
+    metadata = entity.get("metadata") or {}
+    score = 0
+    for field in ("fileno", "pub_date", "effective_date"):
+        if metadata.get(field):
+            score += 1
+    status = str(metadata.get("status") or entity.get("status") or "")
+    if status and status != "unknown":
+        score += 1
+    return score
+
+
+def _has_neris_source(entity: dict[str, Any]) -> bool:
+    return any(source.get("system") == "neris" for source in entity.get("sources") or [])
+
+
+def _choose_kept_entity_id(
+    entity_ids: list[str],
+    entities: dict[str, dict[str, Any]],
+) -> str:
+    return sorted(
+        entity_ids,
+        key=lambda entity_id: (
+            not _has_neris_source(entities[entity_id]),
+            -len((entities[entity_id].get("preferred_content") or {}).get("plain_text") or ""),
+            -_entity_completeness(entities[entity_id]),
+            entity_id,
+        ),
+    )[0]
+
+
+def _source_records_for_entity(
+    source_to_entity: dict[tuple[str, str], str],
+    entity_id: str,
+) -> list[str]:
+    return [
+        f"{system}:{record_id}"
+        for (system, record_id), mapped_id in sorted(source_to_entity.items())
+        if mapped_id == entity_id
+    ]
+
+
+def _merge_catalog_entity(
+    *,
+    entities: dict[str, dict[str, Any]],
+    source_to_entity: dict[tuple[str, str], str],
+    matches: dict[str, dict[str, Any]],
+    kept_id: str,
+    removed_id: str,
+    reason: str,
+) -> dict[str, Any]:
+    kept = entities[kept_id]
+    removed = entities[removed_id]
+    _append_unique_sources(kept, removed)
+    _append_unique_assets(kept, removed)
+    kept_text = str((kept.get("preferred_content") or {}).get("plain_text") or "")
+    removed_text = str((removed.get("preferred_content") or {}).get("plain_text") or "")
+    if len(removed_text) > len(kept_text):
+        kept["preferred_content"] = dict(removed.get("preferred_content") or {})
+
+    metadata = kept.setdefault("metadata", {})
+    merged = metadata.setdefault("merged_catalog_entities", [])
+    merged.append(
+        {
+            "canonical_id": removed_id,
+            "title": removed.get("title"),
+            "reason": reason,
+        }
+    )
+    for item in (removed.get("metadata") or {}).get("merged_catalog_entities") or []:
+        if item not in merged:
+            merged.append(item)
+
+    source_records = _source_records_for_entity(source_to_entity, removed_id)
+    for source_key, mapped_id in list(source_to_entity.items()):
+        if mapped_id == removed_id:
+            source_to_entity[source_key] = kept_id
+    for match in matches.values():
+        if match.get("canonical_id") == removed_id:
+            match["canonical_id"] = kept_id
+    del entities[removed_id]
+    return {
+        "removed_id": removed_id,
+        "kept_id": kept_id,
+        "reason": reason,
+        "source_records": source_records,
+    }
+
+
+def _merge_equivalent_groups(
+    entities: dict[str, dict[str, Any]],
+    source_to_entity: dict[tuple[str, str], str],
+    matches: dict[str, dict[str, Any]],
+    groups: dict[str, list[str]],
+    reason: str,
+) -> list[dict[str, Any]]:
+    merged: list[dict[str, Any]] = []
+    for entity_ids in groups.values():
+        by_title: dict[str, list[str]] = defaultdict(list)
+        for entity_id in entity_ids:
+            if entity_id in entities:
+                key = _entity_dedupe_title_key(entities[entity_id])
+                if key:
+                    by_title[key].append(entity_id)
+        for matching_ids in by_title.values():
+            if len(matching_ids) < 2:
+                continue
+            kept_id = _choose_kept_entity_id(matching_ids, entities)
+            for removed_id in sorted(
+                entity_id for entity_id in matching_ids if entity_id != kept_id
+            ):
+                if removed_id in entities:
+                    merged.append(
+                        _merge_catalog_entity(
+                            entities=entities,
+                            source_to_entity=source_to_entity,
+                            matches=matches,
+                            kept_id=kept_id,
+                            removed_id=removed_id,
+                            reason=reason,
+                        )
+                    )
+    return merged
+
+
+def _body_duplicate_groups(entities: dict[str, dict[str, Any]]) -> dict[str, list[str]]:
+    groups: dict[str, list[str]] = defaultdict(list)
+    for entity_id, entity in entities.items():
+        digest = _body_hash(entity)
+        if digest:
+            groups[digest].append(entity_id)
+    return {digest: ids for digest, ids in groups.items() if len(ids) > 1}
+
+
+def _asset_duplicate_groups(entities: dict[str, dict[str, Any]]) -> dict[str, list[str]]:
+    groups: dict[str, list[str]] = defaultdict(list)
+    for entity_id, entity in entities.items():
+        for sha256 in _entity_asset_shas(entity):
+            groups[sha256].append(entity_id)
+    return {sha256: ids for sha256, ids in groups.items() if len(ids) > 1}
+
+
+def _announcement_mentions_multiple_titles(text: str, entities: list[dict[str, Any]]) -> bool:
+    normalized_text = normalize_title(text)
+    mentioned = 0
+    for entity in entities:
+        title = clean_title(entity.get("title") or (entity.get("metadata") or {}).get("name"))
+        title_base = re.split(r"[（(]", title, maxsplit=1)[0]
+        if title_base and normalize_title(title_base) in normalized_text:
+            mentioned += 1
+    return mentioned >= 2
+
+
+def _is_multi_document_announcement_body(
+    text: str,
+    entities: list[dict[str, Any]],
+) -> bool:
+    if len({entity.get("title") for entity in entities}) < 2:
+        return False
+    if "现公布" not in text and "发布" not in text and "印发" not in text:
+        return False
+    if len(QUOTED_TITLE_RE.findall(text)) < 2:
+        return False
+    return _announcement_mentions_multiple_titles(text, entities)
+
+
+def _repair_multi_document_announcement_content(
+    entities: dict[str, dict[str, Any]],
+) -> list[dict[str, Any]]:
+    repaired: list[dict[str, Any]] = []
+    for digest, entity_ids in _body_duplicate_groups(entities).items():
+        current_entities = [
+            entities[entity_id] for entity_id in entity_ids if entity_id in entities
+        ]
+        if len(current_entities) < 2:
+            continue
+        text = str((current_entities[0].get("preferred_content") or {}).get("plain_text") or "")
+        if not _is_multi_document_announcement_body(text, current_entities):
+            continue
+        for entity in current_entities:
+            preferred = entity.setdefault("preferred_content", {})
+            original_length = len(str(preferred.get("plain_text") or ""))
+            preferred["plain_text"] = ""
+            metadata = entity.setdefault("metadata", {})
+            metadata["content_repair"] = {
+                "reason": "multi_document_announcement_body",
+                "body_hash": digest,
+                "original_text_length": original_length,
+            }
+            repaired.append(
+                {
+                    "canonical_id": entity.get("id"),
+                    "title": entity.get("title"),
+                    "reason": "multi_document_announcement_body",
+                    "body_hash": digest,
+                    "original_text_length": original_length,
+                }
+            )
+    return repaired
+
+
+def deduplicate_catalog_entities(
+    entities: dict[str, dict[str, Any]],
+    source_to_entity: dict[tuple[str, str], str],
+    matches: dict[str, dict[str, Any]],
+) -> dict[str, Any]:
+    merged_entities: list[dict[str, Any]] = []
+    merged_entities.extend(
+        _merge_equivalent_groups(
+            entities,
+            source_to_entity,
+            matches,
+            _body_duplicate_groups(entities),
+            "same_body_equivalent_title",
+        )
+    )
+    merged_entities.extend(
+        _merge_equivalent_groups(
+            entities,
+            source_to_entity,
+            matches,
+            _asset_duplicate_groups(entities),
+            "same_asset_equivalent_title",
+        )
+    )
+    content_repairs = _repair_multi_document_announcement_content(entities)
+    return {
+        "schema_version": 1,
+        "updated_at": utc_now_iso(),
+        "merged": len(merged_entities),
+        "content_repairs_count": len(content_repairs),
+        "merged_entities": merged_entities,
+        "content_repairs": content_repairs,
+    }
 
 
 def _find_existing_amac_entity(
@@ -734,11 +1110,10 @@ def _merge_amac_record(
             entity,
             record,
             role=(
-                "supplemental_official_copy"
-                if status == "supplemental_copy"
-                else "official_copy"
+                "supplemental_official_copy" if status == "supplemental_copy" else "official_copy"
             ),
         )
+        _append_record_assets(entity, record)
         _prefer_longer_record_content(entity, record)
     else:
         title_key = normalize_title((record.get("metadata") or {}).get("name"))
@@ -747,6 +1122,7 @@ def _merge_amac_record(
             entity_id = existing_amac_entity
             entity = entities[entity_id]
             _append_record_source(entity, record, role="official_copy")
+            _append_record_assets(entity, record)
             _prefer_longer_record_content(entity, record)
             status = "same_document"
             confidence = MATCH_AMAC_INTERNAL_TITLE_DATE.confidence
@@ -945,19 +1321,18 @@ def _review_queue_items(
         ):
             reasons.append("source_match_low_confidence")
             rule_ids.append(REVIEW_SOURCE_MATCH_LOW_CONFIDENCE.rule_id)
-        if (
-            metadata.get("document_type") == "self_regulatory_rule"
-            and metadata.get("status") in {None, "", "unknown"}
-        ):
+        if metadata.get("document_type") == "self_regulatory_rule" and metadata.get("status") in {
+            None,
+            "",
+            "unknown",
+        }:
             reasons.append("effectiveness_unknown")
             rule_ids.append(REVIEW_EFFECTIVENESS_UNKNOWN.rule_id)
         if reasons:
             review_items.append(
                 {
                     "source_record_id": record["record_id"],
-                    "canonical_id": source_to_entity.get(
-                        ("amac", record["record_id"])
-                    ),
+                    "canonical_id": source_to_entity.get(("amac", record["record_id"])),
                     "name": metadata.get("name"),
                     "reasons": reasons,
                     "rule_ids": rule_ids,
@@ -1007,6 +1382,7 @@ def build_catalog(*, clean: bool = True) -> dict[str, Any]:
     entities, source_to_entity, title_index = _seed_neris_entities(neris_records)
     matcher = CatalogMatcher(title_index, choose_neris_match_with_rule)
     matches = _match_amac_records(amac_records, matcher, entities, source_to_entity)
+    dedupe_result = deduplicate_catalog_entities(entities, source_to_entity, matches)
     relations = _build_catalog_relations(
         neris_records=neris_records,
         amac_records=amac_records,
@@ -1030,6 +1406,7 @@ def build_catalog(*, clean: bool = True) -> dict[str, Any]:
     writer.write_entities(catalog_laws_dir(), entities)
     writer.write_source_matches(source_matches_path(), source_to_entity, matches)
     writer.write_relations(catalog_relations_path(), relations)
+    save_json(reports_dir() / "canonical_dedupe_map.json", dedupe_result)
     writer.write_review_queue(
         catalog_review_queue_path(),
         rules=catalog_rules_manifest(),
