@@ -61,7 +61,7 @@ def iter_writ_files(limit: int | None = None) -> list[Any]:
     writ_ids = checkpoint.get("pass4", {}).get("completed_writ_ids") or checkpoint.get(
         "completed_ids", {}
     ).get("writs", [])
-    paths = []
+    paths: list[Any] = []
     for writ_id in writ_ids:
         path = writ_file_path(str(writ_id))
         if not path.exists():

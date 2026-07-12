@@ -8,8 +8,14 @@ import sys
 
 from csrc_law_crawler.sources.amac.client import AmacClient, random, time
 from csrc_law_crawler.sources.amac.discovery import (
+    DEFAULT_INDUSTRY_RESEARCH_PAGES,
+    DEFAULT_INDUSTRY_RESEARCH_SECTIONS,
     DEFAULT_PRACTICE_SITE_KEYWORDS,
     DEFAULT_RULE_NOTICE_KEYWORDS,
+    DEFAULT_SELF_REGULATORY_MANAGEMENT_PAGES,
+    DEFAULT_SELF_REGULATORY_MANAGEMENT_SECTIONS,
+    DEFAULT_SELF_REGULATORY_MEASURE_PAGES,
+    DEFAULT_SELF_REGULATORY_MEASURE_SECTIONS,
     DEFAULT_SITE_KEYWORDS,
     DEFAULT_XWFB_PAGES,
     DEFAULT_XWFB_SECTIONS,
@@ -21,10 +27,15 @@ from csrc_law_crawler.sources.amac.discovery import (
     XWFB_PAGE_COUNT_RE,
     date_from_xwfb_url as _date_from_xwfb_url,
     deduplicate_candidates,
+    discover_industry_research_candidates,
     discover_policy_candidates,
+    discover_self_regulatory_management_candidates,
+    discover_self_regulatory_measure_candidates,
+    discover_section_candidates,
     discover_site_candidates,
     discover_xwfb_rule_notice_candidates,
     is_xwfb_rule_notice_title,
+    section_list_url as _section_list_url,
     xwfb_list_url as _xwfb_list_url,
 )
 from csrc_law_crawler.sources.amac.identity import (
@@ -60,8 +71,14 @@ __all__ = [
     "ASSET_SUFFIXES",
     "AmacClient",
     "DATE_SUFFIX_RE",
+    "DEFAULT_INDUSTRY_RESEARCH_PAGES",
+    "DEFAULT_INDUSTRY_RESEARCH_SECTIONS",
     "DEFAULT_PRACTICE_SITE_KEYWORDS",
     "DEFAULT_RULE_NOTICE_KEYWORDS",
+    "DEFAULT_SELF_REGULATORY_MANAGEMENT_PAGES",
+    "DEFAULT_SELF_REGULATORY_MANAGEMENT_SECTIONS",
+    "DEFAULT_SELF_REGULATORY_MEASURE_PAGES",
+    "DEFAULT_SELF_REGULATORY_MEASURE_SECTIONS",
     "DEFAULT_SITE_KEYWORDS",
     "DEFAULT_XWFB_PAGES",
     "DEFAULT_XWFB_SECTIONS",
@@ -82,6 +99,7 @@ __all__ = [
     "_download_asset",
     "_extract_asset_text",
     "_metadata_from_page",
+    "_section_list_url",
     "_title_from_page",
     "_xwfb_list_url",
     "amac_assets_root",
@@ -91,7 +109,11 @@ __all__ = [
     "crawl_amac",
     "crawl_candidate",
     "deduplicate_candidates",
+    "discover_industry_research_candidates",
     "discover_policy_candidates",
+    "discover_self_regulatory_management_candidates",
+    "discover_self_regulatory_measure_candidates",
+    "discover_section_candidates",
     "discover_site_candidates",
     "discover_xwfb_rule_notice_candidates",
     "is_xwfb_rule_notice_title",
@@ -112,7 +134,60 @@ def main() -> int:
         help="每个 xwfb 栏目扫描页数；0 表示跳过",
     )
     parser.add_argument("--keyword", action="append", dest="keywords")
+    parser.add_argument(
+        "--include-self-regulatory-measures",
+        action="store_true",
+        help="also crawl AMAC self-regulatory measure pages under zlgl/zlcs",
+    )
+    parser.add_argument(
+        "--only-self-regulatory-measures",
+        action="store_true",
+        help="crawl only AMAC self-regulatory measure pages under zlgl/zlcs",
+    )
+    parser.add_argument(
+        "--self-regulatory-measure-pages",
+        type=int,
+        default=DEFAULT_SELF_REGULATORY_MEASURE_PAGES,
+        help="number of AMAC zlgl/zlcs list pages to scan",
+    )
+    parser.add_argument(
+        "--include-self-regulatory-management",
+        action="store_true",
+        help="also crawl AMAC self-regulatory management sections under zlgl",
+    )
+    parser.add_argument(
+        "--only-self-regulatory-management",
+        action="store_true",
+        help="crawl only AMAC self-regulatory management sections under zlgl",
+    )
+    parser.add_argument(
+        "--self-regulatory-management-pages",
+        type=int,
+        default=DEFAULT_SELF_REGULATORY_MANAGEMENT_PAGES,
+        help="number of AMAC self-regulatory management list pages to scan; 0 means all pages announced by each section",
+    )
+    parser.add_argument(
+        "--include-industry-research",
+        action="store_true",
+        help="also crawl AMAC industry research sections under hyyj",
+    )
+    parser.add_argument(
+        "--only-industry-research",
+        action="store_true",
+        help="crawl only AMAC industry research sections under hyyj",
+    )
+    parser.add_argument(
+        "--industry-research-pages",
+        type=int,
+        default=DEFAULT_INDUSTRY_RESEARCH_PAGES,
+        help="number of AMAC hyyj list pages to scan; 0 means all pages announced by each section",
+    )
     parser.add_argument("--no-download-assets", action="store_true")
+    parser.add_argument(
+        "--download-pdf-assets",
+        action="store_true",
+        help="download only PDF assets linked from AMAC detail pages",
+    )
     parser.add_argument("--force", action="store_true")
     parser.add_argument("--delay-min", type=float, default=0.25)
     parser.add_argument("--delay-max", type=float, default=0.7)
@@ -122,13 +197,27 @@ def main() -> int:
         help="临时关闭 AMAC HTTPS 证书校验，并在 manifest 中记录",
     )
     args = parser.parse_args()
+    if args.no_download_assets and args.download_pdf_assets:
+        parser.error("--download-pdf-assets cannot be combined with --no-download-assets")
+    download_assets = not args.no_download_assets or args.download_pdf_assets
+    asset_suffixes = {".pdf"} if args.download_pdf_assets else None
     try:
         manifest = crawl_amac(
             policy_limit=args.policy_limit,
             site_limit=args.site_limit,
             xwfb_pages=args.xwfb_pages,
+            self_regulatory_measure_pages=args.self_regulatory_measure_pages,
+            self_regulatory_management_pages=args.self_regulatory_management_pages,
+            industry_research_pages=args.industry_research_pages,
             keywords=args.keywords,
-            download_assets=not args.no_download_assets,
+            include_self_regulatory_measures=args.include_self_regulatory_measures,
+            only_self_regulatory_measures=args.only_self_regulatory_measures,
+            include_self_regulatory_management=args.include_self_regulatory_management,
+            only_self_regulatory_management=args.only_self_regulatory_management,
+            include_industry_research=args.include_industry_research,
+            only_industry_research=args.only_industry_research,
+            download_assets=download_assets,
+            asset_suffixes=asset_suffixes,
             force=args.force,
             delay_min=args.delay_min,
             delay_max=args.delay_max,

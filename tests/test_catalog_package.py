@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import unittest
+from typing import Any
 
 from csrc_law_crawler.processing.catalog import (
     build_catalog_relations,
@@ -44,12 +45,14 @@ class CatalogPackageBoundaryTests(unittest.TestCase):
         self.assertTrue(rule_id)
 
     def test_package_exports_catalog_relations_and_manifest_helpers(self) -> None:
-        neris_records = [{"record_id": "parent", "metadata": {"name": "Example Rule"}}]
-        amac_records = [
+        neris_records: list[dict[str, Any]] = [
+            {"record_id": "parent", "metadata": {"name": "Example Rule"}}
+        ]
+        amac_records: list[dict[str, Any]] = [
             {"record_id": "parent", "parent_record_id": None, "metadata": {}},
             {"record_id": "child", "parent_record_id": "parent", "metadata": {}},
         ]
-        entities = {
+        entities: dict[str, dict[str, Any]] = {
             "law_parent": {
                 "id": "law_parent",
                 "title": "Parent Rule",
@@ -67,7 +70,7 @@ class CatalogPackageBoundaryTests(unittest.TestCase):
                 "metadata": {},
             },
         }
-        source_to_entity = {
+        source_to_entity: dict[tuple[str, str], str] = {
             ("neris", "parent"): "law_parent",
             ("amac", "parent"): "law_parent",
             ("amac", "child"): "law_child",

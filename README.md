@@ -15,6 +15,7 @@
 - 建立“法规 / 条文 → 执法文书”的案例索引。
 - 发现并下载 NERIS 独立附件及正文内嵌图片、附件。
 - 抓取 AMAC 政策法规、页面正文和附件，补充 NERIS 未收录内容。
+- 支持 AMAC 专项抓取：自律管理、行业研究栏目，并可只下载页面显式链接的 PDF。
 - 合并 NERIS 与 AMAC 来源，生成来源无关的统一法规目录。
 - 按来源和标题证据归一化效力状态，并推断正式版替代试行版。
 - 为分类、匹配、效力、关系和人工核验规则输出稳定 `rule_id` 和规则 manifest。
@@ -260,6 +261,34 @@ OUTPUT_DIR/canonical/
 └── manifest.json
 ```
 
+### AMAC 专项抓取
+
+AMAC 抓取默认保持原有政策法规补充行为。需要抓取专项栏目时使用显式参数，仍保持单 worker、随机延迟和 checkpoint 续跑，不做目录枚举或 URL 猜测。
+
+自律管理全量正文和 PDF：
+
+```bash
+python -m csrc_law_crawler.cli.main amac-crawl \
+  --output-root /mnt/d/amac \
+  --only-self-regulatory-management \
+  --download-pdf-assets \
+  --delay-min 2.5 \
+  --delay-max 5.0
+```
+
+行业研究全量正文和 PDF：
+
+```bash
+python -m csrc_law_crawler.cli.main amac-crawl \
+  --output-root /mnt/d/amac \
+  --only-industry-research \
+  --download-pdf-assets \
+  --delay-min 2.5 \
+  --delay-max 5.0
+```
+
+行业研究目前覆盖 `https://www.amac.org.cn/hyyj/` 下的 `研究报告`、`声音`、`ESG研究` 三个子栏目。记录写入 `raw/amac/records/`，PDF 写入 `raw/assets/amac/<source_record_id>/`。PDF 文件名使用 `<清洗后的PDF标题> - <发布日期>.pdf`；如果标题来自列表文本，不使用源站 `P020...pdf` 编号作为可读文件名。记录元数据保留 `source_category/source_section` 主分类，并在同一文件被多个栏目发现时写入 `source_categories/source_sections`。
+
 ## 常用命令
 
 | 任务 | 命令 |
@@ -273,6 +302,8 @@ OUTPUT_DIR/canonical/
 | 只抓案例引用文书 | `python enhance.py --pass 4` |
 | 抓全部执法文书 | `python enhance.py --pass 4 --all-writs` |
 | 抓取 AMAC 补充来源 | `python amac_crawl.py` |
+| 抓取 AMAC 自律管理 PDF | `python -m csrc_law_crawler.cli.main amac-crawl --output-root /mnt/d/amac --only-self-regulatory-management --download-pdf-assets` |
+| 抓取 AMAC 行业研究 PDF | `python -m csrc_law_crawler.cli.main amac-crawl --output-root /mnt/d/amac --only-industry-research --download-pdf-assets` |
 | 生成统一目录 | `python build_catalog.py` |
 | 清洗统一目录 | `python normalize_catalog.py --force --clean` |
 | 导出统一目录 Markdown | `python export_markdown_catalog.py --force --clean` |

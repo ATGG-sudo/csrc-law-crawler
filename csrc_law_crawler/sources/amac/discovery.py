@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import re
-from typing import Any, Iterable
+from typing import Any, Callable, Iterable
 from urllib.parse import urljoin
 
 import requests
@@ -24,9 +24,27 @@ SITE_SEARCH_URL = urljoin(
     "portal/ESSearch/doc/findDocsByKeyword",
 )
 DEFAULT_XWFB_PAGES = 12
+DEFAULT_SELF_REGULATORY_MEASURE_PAGES = 3
+DEFAULT_SELF_REGULATORY_MANAGEMENT_PAGES = 0
+DEFAULT_INDUSTRY_RESEARCH_PAGES = 0
 DEFAULT_XWFB_SECTIONS = [
     ("通知公告", "xwfb/tzgg/"),
     ("协会要闻", "xwfb/xhyw/"),
+]
+DEFAULT_SELF_REGULATORY_MEASURE_SECTIONS = [
+    ("自律措施", "zlgl/zlcs/"),
+]
+DEFAULT_SELF_REGULATORY_MANAGEMENT_SECTIONS = [
+    ("受处分机构", "zlgl/jlcf/scfjg/", "disciplinary_institution"),
+    ("受处分人员", "zlgl/jlcf/scfry/", "disciplinary_person"),
+    ("异常经营", "zlgl/ycjy/ycjyjgclgg/", "abnormal_operation"),
+    ("失联机构", "zlgl/sljg/sljgclgg/", "missing_institution"),
+    ("自律措施", "zlgl/zlcs/", "self_regulatory_measure"),
+]
+DEFAULT_INDUSTRY_RESEARCH_SECTIONS = [
+    ("研究报告", "hyyj/hjtj/", "industry_research_report"),
+    ("声音", "hyyj/sy/", "industry_voice"),
+    ("ESG研究", "hyyj/esgtz/esgyj/", "industry_esg_research"),
 ]
 
 DEFAULT_PRACTICE_SITE_KEYWORDS = [
@@ -58,6 +76,7 @@ DEFAULT_SITE_KEYWORDS = [
 
 XWFB_PAGE_COUNT_RE = re.compile(r"createPageHTML\((\d+),")
 XWFB_ARTICLE_DATE_RE = re.compile(r"t(\d{4})(\d{2})(\d{2})_\d+\.html")
+SECTION_ROW_DATE_RE = re.compile(r"\b\d{4}-\d{2}-\d{2}\b")
 RULE_NOTICE_ACTION_WORDS = ("发布", "印发", "修订", "公开征求意见", "征求意见")
 NON_RULE_NOTICE_WORDS = ("培训", "解读", "举办", "报名时间", "培训时间", "课程", "会议")
 
@@ -176,9 +195,13 @@ def is_xwfb_rule_notice_title(title: str) -> bool:
     )
 
 
-def xwfb_list_url(section_path: str, page_index: int) -> str:
+def section_list_url(section_path: str, page_index: int) -> str:
     filename = "index.html" if page_index == 0 else f"index_{page_index}.html"
     return urljoin(AMAC_BASE_URL, f"{section_path.rstrip('/')}/{filename}")
+
+
+def xwfb_list_url(section_path: str, page_index: int) -> str:
+    return section_list_url(section_path, page_index)
 
 
 def date_from_xwfb_url(url: str) -> str | None:
@@ -189,23 +212,43 @@ def date_from_xwfb_url(url: str) -> str | None:
     return f"{year}-{month}-{day}"
 
 
-def discover_xwfb_rule_notice_candidates(
+def _section_content_root(soup: BeautifulSoup) -> Any:
+    return (
+        soup.select_one(".content-right .c-box")
+        or soup.select_one(".content-right")
+        or soup.select_one(".list-r")
+        or soup.select_one(".list")
+        or soup.select_one("main")
+        or soup
+    )
+
+
+def _visible_row_date(row_text: str) -> str | None:
+    match = SECTION_ROW_DATE_RE.search(row_text)
+    if not match:
+        return None
+    return match.group(0)
+
+
+def discover_section_candidates(
     client: AmacClient,
     *,
-    sections: Iterable[tuple[str, str]] = DEFAULT_XWFB_SECTIONS,
-    max_pages: int = DEFAULT_XWFB_PAGES,
+    sections: Iterable[tuple[str, str]],
+    discovery_channel: str,
+    max_pages: int | None,
+    title_filter: Callable[[str], bool] | None = None,
 ) -> list[dict[str, Any]]:
-    if max_pages <= 0:
+    if max_pages is not None and max_pages <= 0:
         return []
 
     candidates: list[dict[str, Any]] = []
     for section_name, section_path in sections:
         page_count: int | None = None
         page_index = 0
-        while page_index < max_pages and (
+        while (max_pages is None or page_index < max_pages) and (
             page_count is None or page_index < page_count
         ):
-            list_url = xwfb_list_url(section_path, page_index)
+            list_url = section_list_url(section_path, page_index)
             try:
                 response = client.get(list_url)
             except requests.HTTPError as exc:
@@ -219,32 +262,34 @@ def discover_xwfb_rule_notice_candidates(
                 if match:
                     page_count = int(match.group(1))
             soup = BeautifulSoup(raw_html, "html.parser")
-            root = soup.select_one(".content-right .c-box") or soup
+            root = _section_content_root(soup)
             rows_found = 0
             for anchor in root.select("li a[href]"):
                 title = clean_text(anchor.get_text(" ", strip=True))
-                if not is_xwfb_rule_notice_title(title):
+                href = str(anchor.get("href") or "").strip()
+                if not title or not href:
                     continue
-                url = canonical_url(urljoin(list_url, str(anchor.get("href") or "")))
-                rows_found += 1
+                if href.startswith("#") or href.lower().startswith("javascript:"):
+                    continue
+                if title_filter is not None and not title_filter(title):
+                    continue
+                url = canonical_url(urljoin(list_url, href))
                 row_text = clean_text(
                     anchor.parent.get_text(" ", strip=True) if anchor.parent else ""
                 )
-                date_node = anchor.find_next_sibling("i")
+                rows_found += 1
                 candidates.append(
                     {
                         "title": title,
                         "url": url,
-                        "published_at": (
-                            clean_text(date_node.get_text(" ", strip=True))
-                            if date_node
-                            else date_from_xwfb_url(url)
-                        ),
+                        "published_at": _visible_row_date(row_text)
+                        or date_from_xwfb_url(url),
                         "search_content": row_text,
-                        "discovery_channel": "xwfb_rule_notice",
+                        "discovery_channel": discovery_channel,
                         "search_keyword": section_name,
                         "search_raw": {
                             "section": section_name,
+                            "section_path": section_path,
                             "list_url": list_url,
                             "page_index": page_index,
                             "row_text": row_text,
@@ -253,8 +298,79 @@ def discover_xwfb_rule_notice_candidates(
                 )
             if rows_found == 0 and page_count is None:
                 break
+            if max_pages is None and page_count is None:
+                break
             page_index += 1
     return candidates
+
+
+def discover_self_regulatory_measure_candidates(
+    client: AmacClient,
+    *,
+    sections: Iterable[tuple[str, str]] = DEFAULT_SELF_REGULATORY_MEASURE_SECTIONS,
+    max_pages: int = DEFAULT_SELF_REGULATORY_MEASURE_PAGES,
+) -> list[dict[str, Any]]:
+    return discover_section_candidates(
+        client,
+        sections=sections,
+        discovery_channel="self_regulatory_measure",
+        max_pages=max_pages,
+    )
+
+
+def discover_self_regulatory_management_candidates(
+    client: AmacClient,
+    *,
+    sections: Iterable[tuple[str, str, str]] = DEFAULT_SELF_REGULATORY_MANAGEMENT_SECTIONS,
+    max_pages: int = DEFAULT_SELF_REGULATORY_MANAGEMENT_PAGES,
+) -> list[dict[str, Any]]:
+    page_limit: int | None = None if max_pages == 0 else max_pages
+    candidates: list[dict[str, Any]] = []
+    for section_name, section_path, discovery_channel in sections:
+        candidates.extend(
+            discover_section_candidates(
+                client,
+                sections=[(section_name, section_path)],
+                discovery_channel=discovery_channel,
+                max_pages=page_limit,
+            )
+        )
+    return candidates
+
+
+def discover_industry_research_candidates(
+    client: AmacClient,
+    *,
+    sections: Iterable[tuple[str, str, str]] = DEFAULT_INDUSTRY_RESEARCH_SECTIONS,
+    max_pages: int = DEFAULT_INDUSTRY_RESEARCH_PAGES,
+) -> list[dict[str, Any]]:
+    page_limit: int | None = None if max_pages == 0 else max_pages
+    candidates: list[dict[str, Any]] = []
+    for section_name, section_path, discovery_channel in sections:
+        candidates.extend(
+            discover_section_candidates(
+                client,
+                sections=[(section_name, section_path)],
+                discovery_channel=discovery_channel,
+                max_pages=page_limit,
+            )
+        )
+    return candidates
+
+
+def discover_xwfb_rule_notice_candidates(
+    client: AmacClient,
+    *,
+    sections: Iterable[tuple[str, str]] = DEFAULT_XWFB_SECTIONS,
+    max_pages: int = DEFAULT_XWFB_PAGES,
+) -> list[dict[str, Any]]:
+    return discover_section_candidates(
+        client,
+        sections=sections,
+        discovery_channel="xwfb_rule_notice",
+        max_pages=max_pages,
+        title_filter=is_xwfb_rule_notice_title,
+    )
 
 
 def deduplicate_candidates(
@@ -277,8 +393,14 @@ def deduplicate_candidates(
 
 
 __all__ = [
+    "DEFAULT_INDUSTRY_RESEARCH_PAGES",
+    "DEFAULT_INDUSTRY_RESEARCH_SECTIONS",
     "DEFAULT_PRACTICE_SITE_KEYWORDS",
     "DEFAULT_RULE_NOTICE_KEYWORDS",
+    "DEFAULT_SELF_REGULATORY_MANAGEMENT_PAGES",
+    "DEFAULT_SELF_REGULATORY_MANAGEMENT_SECTIONS",
+    "DEFAULT_SELF_REGULATORY_MEASURE_PAGES",
+    "DEFAULT_SELF_REGULATORY_MEASURE_SECTIONS",
     "DEFAULT_SITE_KEYWORDS",
     "DEFAULT_XWFB_PAGES",
     "DEFAULT_XWFB_SECTIONS",
@@ -290,7 +412,11 @@ __all__ = [
     "XWFB_PAGE_COUNT_RE",
     "date_from_xwfb_url",
     "deduplicate_candidates",
+    "discover_industry_research_candidates",
     "discover_policy_candidates",
+    "discover_self_regulatory_management_candidates",
+    "discover_self_regulatory_measure_candidates",
+    "discover_section_candidates",
     "discover_site_candidates",
     "discover_xwfb_rule_notice_candidates",
     "is_xwfb_rule_notice_title",
