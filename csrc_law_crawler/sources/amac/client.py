@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import random
 import time
+from pathlib import Path
 from typing import Any
+from urllib.parse import urlsplit
 
 import requests
 import urllib3
@@ -24,6 +26,7 @@ from runtime import log_event, log_metric
 
 class AmacClient:
     source_name = "amac"
+    fg_ca_bundle = Path(__file__).with_name("fg_ca_bundle.pem")
 
     def __init__(
         self,
@@ -48,6 +51,11 @@ class AmacClient:
         self.delay_min = delay_min
         self.delay_max = delay_max
         self.verify_tls = verify_tls
+
+    def _verify_for_url(self, url: str) -> bool | str:
+        if self.verify_tls and urlsplit(url).hostname == "fg.amac.org.cn":
+            return str(self.fg_ca_bundle)
+        return self.verify_tls
 
     def _pause(self) -> None:
         if self.delay_max > 0:
@@ -118,46 +126,59 @@ class AmacClient:
                 response = self.session.get(
                     url,
                     timeout=self.policy.timeout_seconds,
-                    verify=self.verify_tls,
+                    verify=self._verify_for_url(url),
                     **kwargs,
                 )
                 self._record_response("GET", url, response)
                 if self._is_blocked(response, inspect_body=not stream):
-                    wait = RETRY_BACKOFF_BASE * attempt + random.uniform(1, 4)
-                    self._record_retry(
-                        url=url,
-                        attempt=attempt,
-                        wait=wait,
-                        reason=FailureReason.NETWORK_BLOCKED,
+                    last_error = requests.HTTPError(
+                        f"retryable HTTP status {response.status_code}",
+                        response=response,
                     )
-                    time.sleep(wait)
+                    close = getattr(response, "close", None)
+                    if callable(close):
+                        close()
+                    wait = RETRY_BACKOFF_BASE * attempt + random.uniform(1, 4)
+                    if attempt < MAX_RETRIES:
+                        self._record_retry(
+                            url=url,
+                            attempt=attempt,
+                            wait=wait,
+                            reason=FailureReason.NETWORK_BLOCKED,
+                        )
+                        time.sleep(wait)
                     continue
                 response.raise_for_status()
                 return response
             except requests.HTTPError as exc:
+                status = int(getattr(exc.response, "status_code", 0) or 0)
+                if status < 500 and status not in {408, 429}:
+                    raise
                 last_error = exc
                 wait = RETRY_BACKOFF_BASE * attempt + random.uniform(1, 4)
-                self._record_retry(
-                    url=url,
-                    attempt=attempt,
-                    wait=wait,
-                    reason=FailureReason.HTTP_STATUS_ERROR,
-                    exc=exc,
-                )
-                time.sleep(wait)
+                if attempt < MAX_RETRIES:
+                    self._record_retry(
+                        url=url,
+                        attempt=attempt,
+                        wait=wait,
+                        reason=FailureReason.HTTP_STATUS_ERROR,
+                        exc=exc,
+                    )
+                    time.sleep(wait)
             except requests.RequestException as exc:
                 last_error = exc
                 wait = RETRY_BACKOFF_BASE * attempt + random.uniform(1, 4)
-                self._record_retry(
-                    url=url,
-                    attempt=attempt,
-                    wait=wait,
-                    reason=FailureReason.NETWORK_REQUEST_EXCEPTION,
-                    exc=exc,
-                )
-                time.sleep(wait)
+                if attempt < MAX_RETRIES:
+                    self._record_retry(
+                        url=url,
+                        attempt=attempt,
+                        wait=wait,
+                        reason=FailureReason.NETWORK_REQUEST_EXCEPTION,
+                        exc=exc,
+                    )
+                    time.sleep(wait)
 
-        raise RuntimeError(f"请求失败: {url}") from last_error
+        raise RuntimeError(f"请求失败: {url}: {last_error}") from last_error
 
     def get_json(self, url: str, params: dict[str, Any]) -> dict[str, Any]:
         return self.get(url, params=params).json()
@@ -186,16 +207,17 @@ class AmacClient:
             except RetryableContentError as exc:
                 last_error = exc
                 wait = RETRY_BACKOFF_BASE * attempt + random.uniform(1, 4)
-                self._record_retry(
-                    url=url,
-                    attempt=attempt,
-                    wait=wait,
-                    reason=exc.reason,
-                    exc=exc,
-                )
-                time.sleep(wait)
+                if attempt < MAX_RETRIES:
+                    self._record_retry(
+                        url=url,
+                        attempt=attempt,
+                        wait=wait,
+                        reason=exc.reason,
+                        exc=exc,
+                    )
+                    time.sleep(wait)
 
-        raise RuntimeError(f"请求失败: {url}") from last_error
+        raise RuntimeError(f"请求失败: {url}: {last_error}") from last_error
 
 
 def crawl_candidate(*args: Any, **kwargs: Any) -> dict[str, Any]:

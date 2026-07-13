@@ -19,6 +19,7 @@ from storage import (
     output_path,
     raw_dir,
     relative_to_output,
+    save_bytes,
     save_json,
     utc_now_iso,
 )
@@ -266,7 +267,7 @@ def download_asset(
     asset_dir.mkdir(parents=True, exist_ok=True)
     filename = _asset_filename(url, label, published_at, asset_id)
     path = _unique_asset_path(asset_dir, filename, asset_id)
-    path.write_bytes(data)
+    save_bytes(path, data)
     extracted_text = clean_text(extract_asset_text(data, suffix))
     return {
         "asset_id": asset_id,
@@ -525,6 +526,26 @@ def _record_asset_failures(records: list[dict[str, Any]]) -> list[dict[str, Any]
     return failures
 
 
+def _all_manifest_items() -> list[dict[str, Any]]:
+    items = []
+    for path in sorted(amac_sources_dir().glob("*.json")):
+        record = load_json(path, {})
+        if not isinstance(record, dict) or not record.get("source_record_id"):
+            continue
+        metadata = record.get("metadata") or {}
+        items.append(
+            {
+                "source_record_id": record["source_record_id"],
+                "name": metadata.get("name"),
+                "document_type": metadata.get("document_type"),
+                "status": metadata.get("status"),
+                "file": relative_to_output(path),
+                "assets": len(record.get("assets") or []),
+            }
+        )
+    return items
+
+
 def crawl_amac(
     *,
     policy_limit: int | None = None,
@@ -593,7 +614,6 @@ def crawl_amac(
     candidates = deduplicate_candidates(candidates)
     amac_sources_dir().mkdir(parents=True, exist_ok=True)
 
-    items = []
     records_for_stats: list[dict[str, Any]] = []
     written = 0
     skipped = 0
@@ -654,17 +674,6 @@ def crawl_amac(
                 )
                 continue
         records_for_stats.append(record)
-        metadata = record.get("metadata") or {}
-        items.append(
-            {
-                "source_record_id": record_id,
-                "name": metadata.get("name"),
-                "document_type": metadata.get("document_type"),
-                "status": metadata.get("status"),
-                "file": relative_to_output(path),
-                "assets": len(record.get("assets") or []),
-            }
-        )
         if index % 50 == 0 or index == len(candidates):
             log_event(
                 "amac_progress",
@@ -675,6 +684,7 @@ def crawl_amac(
 
     asset_stats = _asset_stats(records_for_stats)
     manifest_failures = [*failures, *_record_asset_failures(records_for_stats)]
+    items = _all_manifest_items()
     manifest = {
         "schema_version": 1,
         "updated_at": utc_now_iso(),
@@ -699,6 +709,9 @@ def crawl_amac(
         "pdf_assets_renamed": pdf_assets_renamed,
         "tls_policy": {
             "verify": client.verify_tls,
+            "fg_ca_bundle": str(getattr(client, "fg_ca_bundle", "")) or None
+            if client.verify_tls
+            else None,
             "source": "default" if verify_tls == AMAC_VERIFY_TLS else "cli",
         },
         "items": items,

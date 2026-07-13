@@ -198,9 +198,12 @@ def _run_with_context(main: Any, reason: str, original_argv: list[str]) -> int:
         )
         context.finish(exit_code=1)
         raise
-    if exit_code != 0:
+    if exit_code not in {0, 2}:
         context.failure(FailureReason.NONZERO_EXIT, exit_code=exit_code)
-    context.finish(exit_code=exit_code)
+    context.finish(
+        exit_code=exit_code,
+        status={0: "complete", 2: "incomplete"}.get(exit_code, "failed"),
+    )
     return exit_code
 
 

@@ -1,0 +1,2779 @@
+{
+  "schema_version": 1,
+  "source_workbook": "D:\\中国私募股权基金合规规则信源清单_2026-07-13 (1).xlsx",
+  "source_verified_at": "2026-07-13",
+  "query_set_version": "private-fund-query-v1",
+  "query_sets": {
+    "private_fund_core": [
+      "私募基金",
+      "私募投资基金",
+      "私募股权基金",
+      "股权投资基金",
+      "创业投资基金",
+      "基金管理人",
+      "登记备案"
+    ],
+    "state_capital": [
+      "政府投资基金",
+      "政府引导基金",
+      "国资基金",
+      "母基金",
+      "产权转让",
+      "资产评估"
+    ],
+    "cross_border_exit": [
+      "QFLP",
+      "跨境直接投资",
+      "资本项目",
+      "减持",
+      "协议转让",
+      "S基金"
+    ],
+    "tax_aml": [
+      "创业投资税收",
+      "合伙企业",
+      "股权转让",
+      "反洗钱",
+      "受益所有人"
+    ]
+  },
+  "endpoints": [
+    {
+      "endpoint_id": "amac_826b607166",
+      "url": "https://www.amac.org.cn/xwfb/tzgg/",
+      "source_system": "amac",
+      "adapter": "amac",
+      "scope_mode": "catalog_filter",
+      "query_sets": [
+        "private_fund_core"
+      ],
+      "default_material_lane": "reference",
+      "crawlability": "A 直接可抓",
+      "recommended_access": "栏目白名单+详情/附件；2—5秒间隔；PDF文本抽取失败时OCR，避免全站爬取。",
+      "profiles": [
+        {
+          "profile_id": "profile_5945d77fba",
+          "workbook_row": 24,
+          "name": "中基协通知公告",
+          "description": "新自律规则、材料清单、培训通知、系统变更和信用报告等发布入口。",
+          "coverage": "登记备案、信息披露、报送、人员管理、系统操作",
+          "effect": "自律规则/公告/业务通知",
+          "publisher": "中国证券投资基金业协会",
+          "region": "全国",
+          "legal_level": "依具体材料",
+          "material_nature": "通知公告",
+          "officiality": "官方/自律组织",
+          "priority": "P0",
+          "content_carrier": "HTML/PDF/DOC",
+          "update_frequency": "高频",
+          "scope_strategy": "元数据全量+正文分类"
+        }
+      ]
+    },
+    {
+      "endpoint_id": "amac_962cc671c4",
+      "url": "https://www.amac.org.cn/zlgl/jlcf/scfry/",
+      "source_system": "amac",
+      "adapter": "amac",
+      "scope_mode": "enumerable",
+      "query_sets": [],
+      "default_material_lane": "case",
+      "crawlability": "A 直接可抓",
+      "recommended_access": "栏目白名单+详情/附件；2—5秒间隔；PDF文本抽取失败时OCR，避免全站爬取。",
+      "profiles": [
+        {
+          "profile_id": "profile_63924884f9",
+          "workbook_row": 29,
+          "name": "中基协纪律处分—受处分人员",
+          "description": "对高管、合规风控负责人及从业人员的处分决定。",
+          "coverage": "高管履职、合规风控责任、诚信义务、人员管理",
+          "effect": "自律处分决定；案例",
+          "publisher": "中国证券投资基金业协会",
+          "region": "全国",
+          "legal_level": "自律处分",
+          "material_nature": "纪律处分",
+          "officiality": "官方/自律组织",
+          "priority": "P0",
+          "content_carrier": "HTML/PDF/扫描PDF",
+          "update_frequency": "高频",
+          "scope_strategy": "全量"
+        }
+      ]
+    },
+    {
+      "endpoint_id": "amac_964660226c",
+      "url": "https://km.amac.org.cn/kmsWeb/",
+      "source_system": "amac",
+      "adapter": "amac",
+      "scope_mode": "query_exhaustive",
+      "query_sets": [
+        "private_fund_core"
+      ],
+      "default_material_lane": "reference",
+      "crawlability": "C 不宜无人值守",
+      "recommended_access": "优先协会正式导出、授权接口或人工定期快照；问答仅作解释材料。",
+      "profiles": [
+        {
+          "profile_id": "profile_0dfccbc10e",
+          "workbook_row": 25,
+          "name": "中基协业务常见问答",
+          "description": "业务问答系统，反映登记备案和持续报送的操作口径。",
+          "coverage": "登记、备案、重大变更、信息披露、人员和系统操作",
+          "effect": "无独立规范效力；业务问答",
+          "publisher": "中国证券投资基金业协会",
+          "region": "全国",
+          "legal_level": "非规范性自律解释材料",
+          "material_nature": "业务问答",
+          "officiality": "官方/自律组织",
+          "priority": "P0",
+          "content_carrier": "登录态动态系统",
+          "update_frequency": "不定期",
+          "scope_strategy": "私募股权与创投问答"
+        }
+      ]
+    },
+    {
+      "endpoint_id": "amac_a5359f0b91",
+      "url": "https://www.amac.org.cn/",
+      "source_system": "amac",
+      "adapter": "amac",
+      "scope_mode": "enumerable",
+      "query_sets": [],
+      "default_material_lane": "reference",
+      "crawlability": "A 直接可抓",
+      "recommended_access": "栏目白名单+详情/附件；2—5秒间隔；PDF文本抽取失败时OCR，避免全站爬取。",
+      "profiles": [
+        {
+          "profile_id": "profile_32d244dae8",
+          "workbook_row": 22,
+          "name": "中国证券投资基金业协会首页",
+          "description": "已建信源；协会要闻、规则发布、通知公告、自律管理和数据入口的总导航。",
+          "coverage": "管理人登记、基金备案、募集、运作、披露、人员、自律处分",
+          "effect": "自律规则及行业动态；综合入口",
+          "publisher": "中国证券投资基金业协会",
+          "region": "全国",
+          "legal_level": "自律管理体系",
+          "material_nature": "综合入口",
+          "officiality": "官方/自律组织",
+          "priority": "P0",
+          "content_carrier": "HTML/PDF/扫描PDF",
+          "update_frequency": "高频",
+          "scope_strategy": "栏目导航"
+        }
+      ]
+    },
+    {
+      "endpoint_id": "amac_a563ea3237",
+      "url": "https://www.amac.org.cn/zlgl/ycjy/ycjyjgclgg/",
+      "source_system": "amac",
+      "adapter": "amac",
+      "scope_mode": "enumerable",
+      "query_sets": [],
+      "default_material_lane": "case",
+      "crawlability": "A 直接可抓",
+      "recommended_access": "栏目白名单+详情/附件；2—5秒间隔；PDF文本抽取失败时OCR，避免全站爬取。",
+      "profiles": [
+        {
+          "profile_id": "profile_76af859b80",
+          "workbook_row": 30,
+          "name": "中基协异常经营处理公告",
+          "description": "异常经营管理人注销等处理公告。",
+          "coverage": "持续符合登记要求、异常经营、管理人注销、存量基金处置",
+          "effect": "自律处理公告；异常机构案例",
+          "publisher": "中国证券投资基金业协会",
+          "region": "全国",
+          "legal_level": "自律管理措施",
+          "material_nature": "异常经营公告",
+          "officiality": "官方/自律组织",
+          "priority": "P0",
+          "content_carrier": "HTML/附件名单",
+          "update_frequency": "高频",
+          "scope_strategy": "全量"
+        }
+      ]
+    },
+    {
+      "endpoint_id": "amac_ad48f58545",
+      "url": "https://gs.amac.org.cn/",
+      "source_system": "amac",
+      "adapter": "subject_query",
+      "scope_mode": "subject_query",
+      "query_sets": [],
+      "default_material_lane": "subject_snapshot",
+      "crawlability": "B 条件可抓",
+      "recommended_access": "以机构/产品为主做低频差异快照；主体清单驱动查询，设置访问控制和审计日志。",
+      "profiles": [
+        {
+          "profile_id": "profile_2e34dab010",
+          "workbook_row": 27,
+          "name": "中基协机构、产品、人员公示",
+          "description": "管理人、基金产品和从业人员公示查询，是主体识别与处罚关联的重要基础。",
+          "coverage": "管理人状态、基金备案、人员任职、注销异常",
+          "effect": "公示信息；事实性登记备案数据",
+          "publisher": "中国证券投资基金业协会",
+          "region": "全国",
+          "legal_level": "登记备案公示信息",
+          "material_nature": "主体/产品公示",
+          "officiality": "官方/自律组织",
+          "priority": "P0",
+          "content_carrier": "动态查询/接口",
+          "update_frequency": "持续更新",
+          "scope_strategy": "机构/产品为主"
+        }
+      ]
+    },
+    {
+      "endpoint_id": "amac_ae52b803e4",
+      "url": "https://www.amac.org.cn/zlgl/sljg/sljgclgg/",
+      "source_system": "amac",
+      "adapter": "amac",
+      "scope_mode": "enumerable",
+      "query_sets": [],
+      "default_material_lane": "case",
+      "crawlability": "A 直接可抓",
+      "recommended_access": "栏目白名单+详情/附件；2—5秒间隔；PDF文本抽取失败时OCR，避免全站爬取。",
+      "profiles": [
+        {
+          "profile_id": "profile_4a6bb07ec7",
+          "workbook_row": 31,
+          "name": "中基协失联机构处理公告",
+          "description": "失联机构名单、联系公告和注销处理。",
+          "coverage": "失联、诚信风险、注销、存量基金处置",
+          "effect": "自律处理公告；失联机构案例",
+          "publisher": "中国证券投资基金业协会",
+          "region": "全国",
+          "legal_level": "自律管理措施",
+          "material_nature": "失联机构公告",
+          "officiality": "官方/自律组织",
+          "priority": "P1",
+          "content_carrier": "HTML/附件名单",
+          "update_frequency": "不定期",
+          "scope_strategy": "全量"
+        }
+      ]
+    },
+    {
+      "endpoint_id": "amac_c627abf17d",
+      "url": "https://www.amac.org.cn/fwdt/wyb/jgdjhcpbeian/smjjglrdjhcpba/",
+      "source_system": "amac",
+      "adapter": "amac",
+      "scope_mode": "enumerable",
+      "query_sets": [],
+      "default_material_lane": "reference",
+      "crawlability": "A 直接可抓",
+      "recommended_access": "栏目白名单+详情/附件；2—5秒间隔；PDF文本抽取失败时OCR，避免全站爬取。",
+      "profiles": [
+        {
+          "profile_id": "profile_fd9b664284",
+          "workbook_row": 26,
+          "name": "私募基金管理人登记和产品备案服务页",
+          "description": "登记备案办事入口、相关政策、材料和系统链接。",
+          "coverage": "管理人登记、基金备案、重大变更、清算",
+          "effect": "自律业务规则/办事材料",
+          "publisher": "中国证券投资基金业协会",
+          "region": "全国",
+          "legal_level": "自律规则/程序材料",
+          "material_nature": "办事指南/相关政策",
+          "officiality": "官方/自律组织",
+          "priority": "P0",
+          "content_carrier": "HTML/附件/外链系统",
+          "update_frequency": "不定期",
+          "scope_strategy": "全量"
+        }
+      ]
+    },
+    {
+      "endpoint_id": "amac_d05272c2d8",
+      "url": "https://www.amac.org.cn/sjtj/",
+      "source_system": "amac",
+      "adapter": "amac",
+      "scope_mode": "enumerable",
+      "query_sets": [],
+      "default_material_lane": "reference",
+      "crawlability": "A 直接可抓",
+      "recommended_access": "栏目白名单+详情/附件；2—5秒间隔；PDF文本抽取失败时OCR，避免全站爬取。",
+      "profiles": [
+        {
+          "profile_id": "profile_cd0a40008d",
+          "workbook_row": 33,
+          "name": "中基协数据统计",
+          "description": "私募基金登记备案月报、行业年报和统计信息。",
+          "coverage": "管理人数量、基金数量规模、创业投资结构和行业趋势",
+          "effect": "无规范效力；统计资料",
+          "publisher": "中国证券投资基金业协会",
+          "region": "全国",
+          "legal_level": "非规范性统计材料",
+          "material_nature": "统计报告",
+          "officiality": "官方/自律组织",
+          "priority": "P2",
+          "content_carrier": "PDF/HTML/XLSX",
+          "update_frequency": "月度/年度",
+          "scope_strategy": "私募基金统计"
+        }
+      ]
+    },
+    {
+      "endpoint_id": "amac_d5c8803bfb",
+      "url": "https://fg.amac.org.cn/",
+      "source_system": "amac",
+      "adapter": "amac",
+      "scope_mode": "enumerable",
+      "query_sets": [],
+      "default_material_lane": "rule",
+      "crawlability": "B 条件可抓",
+      "recommended_access": "先修复标准CA信任并人工复核；再以低频浏览器/API接入，保留规则分类和附件关系。",
+      "profiles": [
+        {
+          "profile_id": "profile_421110311d",
+          "workbook_row": 23,
+          "name": "中基协法规查询",
+          "description": "协会法规和自律规则检索入口，包含政府规则与协会规则分类。",
+          "coverage": "私募基金全生命周期规则及自律规则",
+          "effect": "法律至自律规则；法规规则数据库",
+          "publisher": "中国证券投资基金业协会",
+          "region": "全国",
+          "legal_level": "法律/行政法规/规章/自律规则",
+          "material_nature": "正式规则/自律规则",
+          "officiality": "官方/自律组织",
+          "priority": "P0",
+          "content_carrier": "动态网页",
+          "update_frequency": "不定期",
+          "scope_strategy": "私募基金主题全量"
+        }
+      ]
+    },
+    {
+      "endpoint_id": "amac_f3e6cd8531",
+      "url": "https://www.amac.org.cn/zlgl/jlcf/scfjg/",
+      "source_system": "amac",
+      "adapter": "amac",
+      "scope_mode": "enumerable",
+      "query_sets": [],
+      "default_material_lane": "case",
+      "crawlability": "A 直接可抓",
+      "recommended_access": "栏目白名单+详情/附件；2—5秒间隔；PDF文本抽取失败时OCR，避免全站爬取。",
+      "profiles": [
+        {
+          "profile_id": "profile_3a61d692fb",
+          "workbook_row": 28,
+          "name": "中基协纪律处分—受处分机构",
+          "description": "对机构的纪律处分决定书，包含事实、规则依据、申辩和处分。",
+          "coverage": "募集、备案、投向、挪用、利益冲突、披露、人员和内控",
+          "effect": "自律处分决定；案例",
+          "publisher": "中国证券投资基金业协会",
+          "region": "全国",
+          "legal_level": "自律处分",
+          "material_nature": "纪律处分",
+          "officiality": "官方/自律组织",
+          "priority": "P0",
+          "content_carrier": "HTML/PDF/扫描PDF",
+          "update_frequency": "高频",
+          "scope_strategy": "全量"
+        }
+      ]
+    },
+    {
+      "endpoint_id": "amac_f8813da6bc",
+      "url": "https://www.amac.org.cn/zlgl/zlcs/",
+      "source_system": "amac",
+      "adapter": "amac",
+      "scope_mode": "enumerable",
+      "query_sets": [],
+      "default_material_lane": "case",
+      "crawlability": "A 直接可抓",
+      "recommended_access": "栏目白名单+详情/附件；2—5秒间隔；PDF文本抽取失败时OCR，避免全站爬取。",
+      "profiles": [
+        {
+          "profile_id": "profile_eb3425aace",
+          "workbook_row": 32,
+          "name": "中基协自律措施",
+          "description": "暂停募集业务、注销服务登记等其他自律措施。",
+          "coverage": "募集销售、服务机构、电子合同、系统接入",
+          "effect": "自律措施决定；案例",
+          "publisher": "中国证券投资基金业协会",
+          "region": "全国",
+          "legal_level": "自律管理措施",
+          "material_nature": "自律措施",
+          "officiality": "官方/自律组织",
+          "priority": "P1",
+          "content_carrier": "HTML",
+          "update_frequency": "低频",
+          "scope_strategy": "全量"
+        }
+      ]
+    },
+    {
+      "endpoint_id": "beijing_gov_cn_091f4c8354",
+      "url": "https://www.beijing.gov.cn/zhengce/",
+      "source_system": "beijing_gov_cn",
+      "adapter": "http_html",
+      "scope_mode": "query_exhaustive",
+      "query_sets": [
+        "private_fund_core",
+        "state_capital",
+        "cross_border_exit"
+      ],
+      "default_material_lane": "rule",
+      "crawlability": "A 直接可抓",
+      "recommended_access": "标准HTTP抓取；1—2并发、2—5秒间隔、条件请求、缓存和失败熔断。",
+      "profiles": [
+        {
+          "profile_id": "profile_ebd662281f",
+          "workbook_row": 85,
+          "name": "北京市政府政策文件",
+          "description": "北京市政府、市政府办公厅及部门文件统一入口。",
+          "coverage": "股权投资、创业投资、政府引导基金、QFLP和营商政策",
+          "effect": "地方政府规章/规范性文件/政策",
+          "publisher": "北京市人民政府",
+          "region": "北京",
+          "legal_level": "依具体文件",
+          "material_nature": "市级政策文件",
+          "officiality": "官方",
+          "priority": "P1",
+          "content_carrier": "动态HTML/PDF",
+          "update_frequency": "不定期",
+          "scope_strategy": "关键词专题"
+        }
+      ]
+    },
+    {
+      "endpoint_id": "bse_cn_066a1d9115",
+      "url": "https://www.bse.cn/",
+      "source_system": "bse_cn",
+      "adapter": "http_html",
+      "scope_mode": "query_exhaustive",
+      "query_sets": [
+        "private_fund_core",
+        "cross_border_exit"
+      ],
+      "default_material_lane": "rule",
+      "crawlability": "A 直接可抓",
+      "recommended_access": "标准HTTP抓取；1—2并发、2—5秒间隔、条件请求、缓存和失败熔断。",
+      "profiles": [
+        {
+          "profile_id": "profile_85e86e9f86",
+          "workbook_row": 54,
+          "name": "北京证券交易所业务规则",
+          "description": "北交所规则对创新型中小企业投资退出和限售减持相关。",
+          "coverage": "北交所上市、限售、减持、股份转让和退出",
+          "effect": "交易所自律规则/业务指南",
+          "publisher": "北京证券交易所",
+          "region": "全国/北京市场",
+          "legal_level": "自律规则",
+          "material_nature": "交易所规则",
+          "officiality": "官方/自律组织",
+          "priority": "P2",
+          "content_carrier": "动态HTML/PDF",
+          "update_frequency": "不定期",
+          "scope_strategy": "重点主题"
+        }
+      ]
+    },
+    {
+      "endpoint_id": "chinaclear_cn_bfb652897d",
+      "url": "https://www.chinaclear.cn/",
+      "source_system": "chinaclear_cn",
+      "adapter": "http_html",
+      "scope_mode": "query_exhaustive",
+      "query_sets": [
+        "private_fund_core"
+      ],
+      "default_material_lane": "rule",
+      "crawlability": "A 直接可抓",
+      "recommended_access": "标准HTTP抓取；1—2并发、2—5秒间隔、条件请求、缓存和失败熔断。",
+      "profiles": [
+        {
+          "profile_id": "profile_fdd2c1ee82",
+          "workbook_row": 56,
+          "name": "中国结算法律规则",
+          "description": "登记结算业务规则，涉及限售股份、非交易过户、质押和基金份额登记等。",
+          "coverage": "股份登记、限售、非交易过户、质押、基金与资管业务",
+          "effect": "基础设施业务规则/指南",
+          "publisher": "中国证券登记结算有限责任公司",
+          "region": "全国",
+          "legal_level": "业务规则",
+          "material_nature": "登记结算规则",
+          "officiality": "官方",
+          "priority": "P2",
+          "content_carrier": "HTML/PDF",
+          "update_frequency": "不定期",
+          "scope_strategy": "重点主题"
+        }
+      ]
+    },
+    {
+      "endpoint_id": "court_gov_cn_ecec2b4f1d",
+      "url": "https://www.court.gov.cn/zixun/gengduo/104_9.html",
+      "source_system": "court_gov_cn",
+      "adapter": "http_html",
+      "scope_mode": "query_exhaustive",
+      "query_sets": [
+        "private_fund_core"
+      ],
+      "default_material_lane": "case",
+      "crawlability": "A 直接可抓",
+      "recommended_access": "标准HTTP抓取；1—2并发、2—5秒间隔、条件请求、缓存和失败熔断。",
+      "profiles": [
+        {
+          "profile_id": "profile_02e588b58b",
+          "workbook_row": 49,
+          "name": "最高人民法院典型案例发布",
+          "description": "最高法典型案例发布栏目，可发现私募基金犯罪及商事审判材料。",
+          "coverage": "私募基金犯罪、非法集资、合同和公司纠纷",
+          "effect": "典型案例；司法参考材料",
+          "publisher": "最高人民法院",
+          "region": "全国",
+          "legal_level": "非司法解释",
+          "material_nature": "典型案例",
+          "officiality": "官方",
+          "priority": "P2",
+          "content_carrier": "HTML",
+          "update_frequency": "不定期",
+          "scope_strategy": "关键词"
+        }
+      ]
+    },
+    {
+      "endpoint_id": "csrc_0460dc9ebc",
+      "url": "https://www.csrc.gov.cn/csrc/c101972/zfxxgk_zdgk.shtml",
+      "source_system": "csrc",
+      "adapter": "csrc",
+      "scope_mode": "catalog_filter",
+      "query_sets": [
+        "private_fund_core"
+      ],
+      "default_material_lane": "case",
+      "crawlability": "B 条件可抓",
+      "recommended_access": "栏目白名单+浏览器/API混合；详情和附件落库，按URL/文号去重；单并发、5秒以上间隔。",
+      "profiles": [
+        {
+          "profile_id": "profile_7e37c1b2b2",
+          "workbook_row": 17,
+          "name": "证监会市场禁入",
+          "description": "证券市场禁入决定集中入口。",
+          "coverage": "私募管理人及责任人员严重违法、从业禁入",
+          "effect": "市场禁入决定；执法案例",
+          "publisher": "中国证监会",
+          "region": "全国",
+          "legal_level": "个案行政执法决定",
+          "material_nature": "市场禁入",
+          "officiality": "官方",
+          "priority": "P1",
+          "content_carrier": "HTML/PDF",
+          "update_frequency": "不定期",
+          "scope_strategy": "全量后私募分类"
+        }
+      ]
+    },
+    {
+      "endpoint_id": "csrc_0a3bdf6e5a",
+      "url": "https://eid.csrc.gov.cn/",
+      "source_system": "csrc",
+      "adapter": "subject_query",
+      "scope_mode": "subject_query",
+      "query_sets": [],
+      "default_material_lane": "subject_snapshot",
+      "crawlability": "D 当前受阻",
+      "recommended_access": "上线前从部署网络人工复核；优先申请合法查询接口/白名单，无法取得时保留人工核验。",
+      "profiles": [
+        {
+          "profile_id": "profile_815012b8a1",
+          "workbook_row": 21,
+          "name": "证券期货市场失信记录查询平台",
+          "description": "查询市场主体失信记录和监管诚信信息的官方入口。",
+          "coverage": "管理人、从业人员、股东和关联主体诚信核查",
+          "effect": "诚信记录；监管结果信息",
+          "publisher": "中国证监会",
+          "region": "全国",
+          "legal_level": "依具体记录",
+          "material_nature": "诚信公示/查询",
+          "officiality": "官方",
+          "priority": "P1",
+          "content_carrier": "动态检索/可能验证码",
+          "update_frequency": "持续更新",
+          "scope_strategy": "按主体查询"
+        }
+      ]
+    },
+    {
+      "endpoint_id": "csrc_158df134ad",
+      "url": "https://www.csrc.gov.cn/csrc/c101973/zfxxgk_zdgk.shtml",
+      "source_system": "csrc",
+      "adapter": "csrc",
+      "scope_mode": "query_exhaustive",
+      "query_sets": [
+        "private_fund_core"
+      ],
+      "default_material_lane": "case",
+      "crawlability": "B 条件可抓",
+      "recommended_access": "栏目白名单+浏览器/API混合；详情和附件落库，按URL/文号去重；单并发、5秒以上间隔。",
+      "profiles": [
+        {
+          "profile_id": "profile_ca97f4022b",
+          "workbook_row": 19,
+          "name": "证监会行政复议",
+          "description": "行政复议决定可反映监管措施和处罚的程序、适用及争议焦点。",
+          "coverage": "行政处罚、监管措施、登记备案争议与程序问题",
+          "effect": "行政复议决定；救济案例",
+          "publisher": "中国证监会",
+          "region": "全国",
+          "legal_level": "个案行政复议决定",
+          "material_nature": "行政复议",
+          "officiality": "官方",
+          "priority": "P1",
+          "content_carrier": "HTML/PDF",
+          "update_frequency": "不定期",
+          "scope_strategy": "关键词+私募主体"
+        }
+      ]
+    },
+    {
+      "endpoint_id": "csrc_19ec1ae6b0",
+      "url": "https://www.csrc.gov.cn/csrc/c100044/tz.shtml?channelid=212665889d144f0392445f47661ca98e",
+      "source_system": "csrc",
+      "adapter": "csrc",
+      "scope_mode": "catalog_filter",
+      "query_sets": [
+        "private_fund_core"
+      ],
+      "default_material_lane": "case",
+      "crawlability": "B 条件可抓",
+      "recommended_access": "栏目白名单+浏览器/API混合；详情和附件落库，按URL/文号去重；单并发、5秒以上间隔。",
+      "profiles": [
+        {
+          "profile_id": "profile_26ded72da3",
+          "workbook_row": 18,
+          "name": "证监会及派出机构监管措施聚合",
+          "description": "聚合行政监管措施，覆盖警示函、责令改正、暂停业务等。",
+          "coverage": "登记备案持续合规、募集销售、信息披露、投向与内控",
+          "effect": "行政监管措施；执法案例",
+          "publisher": "中国证监会及派出机构",
+          "region": "全国",
+          "legal_level": "行政监管措施",
+          "material_nature": "监管措施",
+          "officiality": "官方",
+          "priority": "P0",
+          "content_carrier": "动态HTML",
+          "update_frequency": "高频",
+          "scope_strategy": "全量后私募分类"
+        }
+      ]
+    },
+    {
+      "endpoint_id": "csrc_22797736be",
+      "url": "https://www.csrc.gov.cn/shenzhen/c104324/zfxxgk_zdgk.shtml?channelid=8a09499d2c44465196c861961de3e0e7",
+      "source_system": "csrc",
+      "adapter": "csrc",
+      "scope_mode": "query_exhaustive",
+      "query_sets": [
+        "private_fund_core"
+      ],
+      "default_material_lane": "reference",
+      "crawlability": "B 条件可抓",
+      "recommended_access": "栏目白名单+浏览器/API混合；详情和附件落库，按URL/文号去重；单并发、5秒以上间隔。",
+      "profiles": [
+        {
+          "profile_id": "profile_46d40d967d",
+          "workbook_row": 65,
+          "name": "深圳证监局通知公告",
+          "description": "深圳辖区检查、公示和业务通知。",
+          "coverage": "私募检查、风险名单、公示和监管安排",
+          "effect": "通知公告/监管动态",
+          "publisher": "深圳证监局",
+          "region": "深圳",
+          "legal_level": "依具体材料",
+          "material_nature": "地方监管动态",
+          "officiality": "官方",
+          "priority": "P0",
+          "content_carrier": "HTML/附件",
+          "update_frequency": "高频",
+          "scope_strategy": "关键词"
+        }
+      ]
+    },
+    {
+      "endpoint_id": "csrc_2bbedde21b",
+      "url": "https://www.csrc.gov.cn/csrc/c100200/common_list.shtml",
+      "source_system": "csrc",
+      "adapter": "csrc",
+      "scope_mode": "query_exhaustive",
+      "query_sets": [
+        "private_fund_core"
+      ],
+      "default_material_lane": "case",
+      "crawlability": "B 条件可抓",
+      "recommended_access": "栏目白名单+浏览器/API混合；详情和附件落库，按URL/文号去重；单并发、5秒以上间隔。",
+      "profiles": [
+        {
+          "profile_id": "profile_8bb3f05927",
+          "workbook_row": 20,
+          "name": "证监会执法动态",
+          "description": "稽查执法新闻、典型案件和专项行动动态，往往早于完整决定书发布。",
+          "coverage": "私募基金专项执法、案件通报、行刑衔接",
+          "effect": "无独立规范效力；执法动态/典型案例",
+          "publisher": "中国证监会",
+          "region": "全国",
+          "legal_level": "非规范性执法材料",
+          "material_nature": "执法动态",
+          "officiality": "官方",
+          "priority": "P0",
+          "content_carrier": "HTML",
+          "update_frequency": "高频",
+          "scope_strategy": "关键词"
+        }
+      ]
+    },
+    {
+      "endpoint_id": "csrc_3e52c3e84a",
+      "url": "https://www.csrc.gov.cn/shanghai/c103874/zfxxgk_zdgk.shtml?channelid=c8318fc200764e38b30116c2d5f72b4b",
+      "source_system": "csrc",
+      "adapter": "csrc",
+      "scope_mode": "catalog_filter",
+      "query_sets": [
+        "private_fund_core"
+      ],
+      "default_material_lane": "case",
+      "crawlability": "B 条件可抓",
+      "recommended_access": "栏目白名单+浏览器/API混合；详情和附件落库，按URL/文号去重；单并发、5秒以上间隔。",
+      "profiles": [
+        {
+          "profile_id": "profile_4afed21c5c",
+          "workbook_row": 62,
+          "name": "上海证监局行政处罚",
+          "description": "上海辖区行政处罚决定书。",
+          "coverage": "私募基金募集、挪用、利益输送、虚假报送和责任人员",
+          "effect": "行政处罚决定；执法案例",
+          "publisher": "上海证监局",
+          "region": "上海",
+          "legal_level": "个案行政执法决定",
+          "material_nature": "行政处罚",
+          "officiality": "官方",
+          "priority": "P0",
+          "content_carrier": "HTML/PDF",
+          "update_frequency": "高频",
+          "scope_strategy": "全量后私募分类"
+        }
+      ]
+    },
+    {
+      "endpoint_id": "csrc_40c79a43bd",
+      "url": "https://www.csrc.gov.cn/beijing/c105548/common_list_zt.shtml?channelid=8ddc72c87a7349bfb67b040b834f09ed",
+      "source_system": "csrc",
+      "adapter": "csrc",
+      "scope_mode": "enumerable",
+      "query_sets": [],
+      "default_material_lane": "reference",
+      "crawlability": "B 条件可抓",
+      "recommended_access": "栏目白名单+浏览器/API混合；详情和附件落库，按URL/文号去重；单并发、5秒以上间隔。",
+      "profiles": [
+        {
+          "profile_id": "profile_dd78b9a27b",
+          "workbook_row": 60,
+          "name": "北京证监局私募监管专题",
+          "description": "北京局独立私募监管专题，集中监管措施、注销公示、风险提示等。",
+          "coverage": "私募管理人持续合规、检查、注销、风险警示",
+          "effect": "监管措施/通知/案例；专题聚合",
+          "publisher": "北京证监局",
+          "region": "北京",
+          "legal_level": "依具体材料",
+          "material_nature": "私募监管专题",
+          "officiality": "官方",
+          "priority": "P0",
+          "content_carrier": "HTML/附件",
+          "update_frequency": "高频",
+          "scope_strategy": "全量"
+        }
+      ]
+    },
+    {
+      "endpoint_id": "csrc_58084af94c",
+      "url": "https://www.csrc.gov.cn/csrc/c100040/common_list.shtml?channelid=bba83d3ba6f5441c942a2dff034a0658",
+      "source_system": "csrc",
+      "adapter": "csrc",
+      "scope_mode": "query_exhaustive",
+      "query_sets": [
+        "private_fund_core"
+      ],
+      "default_material_lane": "reference",
+      "crawlability": "B 条件可抓",
+      "recommended_access": "栏目白名单+浏览器/API混合；详情和附件落库，按URL/文号去重；单并发、5秒以上间隔。",
+      "profiles": [
+        {
+          "profile_id": "profile_8451efc4d4",
+          "workbook_row": 13,
+          "name": "证监会日常监管信息",
+          "description": "日常监管通报、机构监管信息和风险提示等动态材料。",
+          "coverage": "检查重点、机构风险、合规提示",
+          "effect": "无统一效力；监管动态/风险信息",
+          "publisher": "中国证监会",
+          "region": "全国",
+          "legal_level": "非规范性监管材料",
+          "material_nature": "日常监管信息",
+          "officiality": "官方",
+          "priority": "P1",
+          "content_carrier": "HTML/附件",
+          "update_frequency": "不定期",
+          "scope_strategy": "关键词"
+        }
+      ]
+    },
+    {
+      "endpoint_id": "csrc_695d4aeadf",
+      "url": "https://www.csrc.gov.cn/beijing/c103570/zfxxgk_zdgk.shtml?channelid=53be9cf2273744cda5c5780e0dded972",
+      "source_system": "csrc",
+      "adapter": "csrc",
+      "scope_mode": "catalog_filter",
+      "query_sets": [
+        "private_fund_core"
+      ],
+      "default_material_lane": "case",
+      "crawlability": "B 条件可抓",
+      "recommended_access": "栏目白名单+浏览器/API混合；详情和附件落库，按URL/文号去重；单并发、5秒以上间隔。",
+      "profiles": [
+        {
+          "profile_id": "profile_917f316c6d",
+          "workbook_row": 58,
+          "name": "北京证监局行政处罚",
+          "description": "北京辖区行政处罚决定书。",
+          "coverage": "私募管理人及责任人员违法、非法募集、侵占挪用",
+          "effect": "行政处罚决定；执法案例",
+          "publisher": "北京证监局",
+          "region": "北京",
+          "legal_level": "个案行政执法决定",
+          "material_nature": "行政处罚",
+          "officiality": "官方",
+          "priority": "P0",
+          "content_carrier": "HTML/PDF",
+          "update_frequency": "高频",
+          "scope_strategy": "全量后私募分类"
+        }
+      ]
+    },
+    {
+      "endpoint_id": "csrc_7d5d5adf7a",
+      "url": "https://www.csrc.gov.cn/csrc/c105948/zfxxgk_zdgk.shtml?channelid=a646cc4ea60542d081bd38eab9494c92",
+      "source_system": "csrc",
+      "adapter": "csrc",
+      "scope_mode": "catalog_filter",
+      "query_sets": [
+        "private_fund_core"
+      ],
+      "default_material_lane": "rule",
+      "crawlability": "B 条件可抓",
+      "recommended_access": "栏目白名单+浏览器/API混合；详情和附件落库，按URL/文号去重；单并发、5秒以上间隔。",
+      "profiles": [
+        {
+          "profile_id": "profile_2002a3c0c7",
+          "workbook_row": 12,
+          "name": "证监会监管规则适用指引",
+          "description": "监管规则适用指引集中入口，可能包含机构、法律、会计、评估等与基金有关的口径。",
+          "coverage": "机构监管、法律适用、估值会计、上市退出",
+          "effect": "规范性监管指引；适用指引",
+          "publisher": "中国证监会",
+          "region": "全国",
+          "legal_level": "依具体指引",
+          "material_nature": "监管规则适用指引",
+          "officiality": "官方",
+          "priority": "P1",
+          "content_carrier": "HTML/PDF",
+          "update_frequency": "不定期",
+          "scope_strategy": "元数据全量+正文关键词"
+        }
+      ]
+    },
+    {
+      "endpoint_id": "csrc_826c8f0827",
+      "url": "https://www.csrc.gov.cn/csrc/c100039/common_list.shtml",
+      "source_system": "csrc",
+      "adapter": "csrc",
+      "scope_mode": "query_exhaustive",
+      "query_sets": [
+        "private_fund_core"
+      ],
+      "default_material_lane": "reference",
+      "crawlability": "B 条件可抓",
+      "recommended_access": "栏目白名单+浏览器/API混合；详情和附件落库，按URL/文号去重；单并发、5秒以上间隔。",
+      "profiles": [
+        {
+          "profile_id": "profile_5cc6e0ebc4",
+          "workbook_row": 11,
+          "name": "证监会政策解读",
+          "description": "证监会对新规背景、适用口径和监管目标的官方解读。",
+          "coverage": "新规释义、创业投资政策、基金监管口径",
+          "effect": "无独立规范效力；官方政策解读",
+          "publisher": "中国证监会",
+          "region": "全国",
+          "legal_level": "非规范性解释材料",
+          "material_nature": "政策解读",
+          "officiality": "官方",
+          "priority": "P1",
+          "content_carrier": "HTML/附件",
+          "update_frequency": "不定期",
+          "scope_strategy": "关键词"
+        }
+      ]
+    },
+    {
+      "endpoint_id": "csrc_931c24ba9a",
+      "url": "https://www.csrc.gov.cn/shenzhen/c105632/common_list.shtml?channelid=35410156563b4ad4b77038283552b906",
+      "source_system": "csrc",
+      "adapter": "csrc",
+      "scope_mode": "enumerable",
+      "query_sets": [],
+      "default_material_lane": "case",
+      "crawlability": "B 条件可抓",
+      "recommended_access": "栏目白名单+浏览器/API混合；详情和附件落库，按URL/文号去重；单并发、5秒以上间隔。",
+      "profiles": [
+        {
+          "profile_id": "profile_b5d0885783",
+          "workbook_row": 68,
+          "name": "深圳证监局通讯与通报",
+          "description": "监管通讯、案例通报和警示教育材料。",
+          "coverage": "典型风险、检查发现、执法司法协作",
+          "effect": "无独立规范效力；监管通报",
+          "publisher": "深圳证监局",
+          "region": "深圳",
+          "legal_level": "非规范性监管材料",
+          "material_nature": "通讯与通报",
+          "officiality": "官方",
+          "priority": "P1",
+          "content_carrier": "HTML/PDF",
+          "update_frequency": "不定期",
+          "scope_strategy": "全量"
+        }
+      ]
+    },
+    {
+      "endpoint_id": "csrc_95a024a8b7",
+      "url": "https://www.csrc.gov.cn/csrc/c101971/zfxxgk_zdgk.shtml",
+      "source_system": "csrc",
+      "adapter": "csrc",
+      "scope_mode": "catalog_filter",
+      "query_sets": [
+        "private_fund_core"
+      ],
+      "default_material_lane": "case",
+      "crawlability": "B 条件可抓",
+      "recommended_access": "栏目白名单+浏览器/API混合；详情和附件落库，按URL/文号去重；单并发、5秒以上间隔。",
+      "profiles": [
+        {
+          "profile_id": "profile_4caea757ae",
+          "workbook_row": 16,
+          "name": "证监会行政处罚",
+          "description": "证监会本级行政处罚决定书集中入口。",
+          "coverage": "挪用基金财产、利益输送、虚假报送、公开募集、从业人员违法",
+          "effect": "行政处罚决定；执法案例",
+          "publisher": "中国证监会",
+          "region": "全国",
+          "legal_level": "个案行政执法决定",
+          "material_nature": "行政处罚",
+          "officiality": "官方",
+          "priority": "P0",
+          "content_carrier": "HTML/PDF",
+          "update_frequency": "高频/不定期",
+          "scope_strategy": "全量后私募分类"
+        }
+      ]
+    },
+    {
+      "endpoint_id": "csrc_97e0dc188e",
+      "url": "https://www.csrc.gov.cn/beijing/c103564/zfxxgk_zdgk.shtml?channelid=50ce961939084a4a9d81946f62dd0e70",
+      "source_system": "csrc",
+      "adapter": "csrc",
+      "scope_mode": "query_exhaustive",
+      "query_sets": [
+        "private_fund_core"
+      ],
+      "default_material_lane": "reference",
+      "crawlability": "B 条件可抓",
+      "recommended_access": "栏目白名单+浏览器/API混合；详情和附件落库，按URL/文号去重；单并发、5秒以上间隔。",
+      "profiles": [
+        {
+          "profile_id": "profile_fb131cfc72",
+          "workbook_row": 57,
+          "name": "北京证监局通知公告",
+          "description": "北京辖区监管通知、检查安排和注销名单等。",
+          "coverage": "辖区私募检查、注销、公示、监管安排",
+          "effect": "通知公告/监管动态",
+          "publisher": "北京证监局",
+          "region": "北京",
+          "legal_level": "依具体材料",
+          "material_nature": "地方监管动态",
+          "officiality": "官方",
+          "priority": "P0",
+          "content_carrier": "HTML/附件",
+          "update_frequency": "高频",
+          "scope_strategy": "关键词"
+        }
+      ]
+    },
+    {
+      "endpoint_id": "csrc_a98ad74190",
+      "url": "https://www.csrc.gov.cn/shanghai/c103869/zfxxgk_zdgk.shtml?channelid=f94a4324023e4df88d82b71e10de7ac9",
+      "source_system": "csrc",
+      "adapter": "csrc",
+      "scope_mode": "query_exhaustive",
+      "query_sets": [
+        "private_fund_core"
+      ],
+      "default_material_lane": "reference",
+      "crawlability": "B 条件可抓",
+      "recommended_access": "栏目白名单+浏览器/API混合；详情和附件落库，按URL/文号去重；单并发、5秒以上间隔。",
+      "profiles": [
+        {
+          "profile_id": "profile_66f3d900f9",
+          "workbook_row": 61,
+          "name": "上海证监局通知公告",
+          "description": "上海辖区检查、公示、送达和业务通知。",
+          "coverage": "私募检查、机构公示、监管安排、送达公告",
+          "effect": "通知公告/监管动态",
+          "publisher": "上海证监局",
+          "region": "上海",
+          "legal_level": "依具体材料",
+          "material_nature": "地方监管动态",
+          "officiality": "官方",
+          "priority": "P0",
+          "content_carrier": "HTML/附件",
+          "update_frequency": "高频",
+          "scope_strategy": "关键词"
+        }
+      ]
+    },
+    {
+      "endpoint_id": "csrc_af05d820f1",
+      "url": "https://www.csrc.gov.cn/shenzhen/c104332/zfxxgk_zdgk.shtml?channelid=58959eb1bd68458088cac63f46a5fa40",
+      "source_system": "csrc",
+      "adapter": "csrc",
+      "scope_mode": "catalog_filter",
+      "query_sets": [
+        "private_fund_core"
+      ],
+      "default_material_lane": "case",
+      "crawlability": "B 条件可抓",
+      "recommended_access": "栏目白名单+浏览器/API混合；详情和附件落库，按URL/文号去重；单并发、5秒以上间隔。",
+      "profiles": [
+        {
+          "profile_id": "profile_a6fd9d5685",
+          "workbook_row": 66,
+          "name": "深圳证监局监管措施",
+          "description": "深圳辖区责令改正、警示函等措施，私募案例更新活跃。",
+          "coverage": "募集、投向、利益冲突、信息披露、内控、人员履职",
+          "effect": "行政监管措施；执法案例",
+          "publisher": "深圳证监局",
+          "region": "深圳",
+          "legal_level": "行政监管措施",
+          "material_nature": "监管措施",
+          "officiality": "官方",
+          "priority": "P0",
+          "content_carrier": "HTML/PDF",
+          "update_frequency": "高频",
+          "scope_strategy": "全量后私募分类"
+        }
+      ]
+    },
+    {
+      "endpoint_id": "csrc_b133013d9e",
+      "url": "https://www.csrc.gov.cn/csrc/c101953/zfxxgk_zdgk.shtml",
+      "source_system": "csrc",
+      "adapter": "csrc",
+      "scope_mode": "enumerable",
+      "query_sets": [],
+      "default_material_lane": "rule",
+      "crawlability": "B 条件可抓",
+      "recommended_access": "栏目白名单+浏览器/API混合；详情和附件落库，按URL/文号去重；单并发、5秒以上间隔。",
+      "profiles": [
+        {
+          "profile_id": "profile_335fca9f76",
+          "workbook_row": 9,
+          "name": "证监会令（规章）",
+          "description": "证监会部门规章独立列表，可快速发现新发、修改和废止规章。",
+          "coverage": "私募基金监管、信息披露、监督管理措施等",
+          "effect": "部门规章；证监会令",
+          "publisher": "中国证监会",
+          "region": "全国",
+          "legal_level": "部门规章",
+          "material_nature": "正式规则",
+          "officiality": "官方",
+          "priority": "P0",
+          "content_carrier": "HTML/附件",
+          "update_frequency": "不定期",
+          "scope_strategy": "全量"
+        }
+      ]
+    },
+    {
+      "endpoint_id": "csrc_b1506fe15a",
+      "url": "https://www.csrc.gov.cn/shanghai/c103876/zfxxgk_zdgk.shtml?channelid=9ebc4198232e496e8bebf1b1bb1778ef",
+      "source_system": "csrc",
+      "adapter": "csrc",
+      "scope_mode": "catalog_filter",
+      "query_sets": [
+        "private_fund_core"
+      ],
+      "default_material_lane": "case",
+      "crawlability": "B 条件可抓",
+      "recommended_access": "栏目白名单+浏览器/API混合；详情和附件落库，按URL/文号去重；单并发、5秒以上间隔。",
+      "profiles": [
+        {
+          "profile_id": "profile_b02119e075",
+          "workbook_row": 63,
+          "name": "上海证监局监管措施",
+          "description": "上海辖区行政监管措施决定。",
+          "coverage": "管理人持续合规、关联交易、募集、披露、内控和人员",
+          "effect": "行政监管措施；执法案例",
+          "publisher": "上海证监局",
+          "region": "上海",
+          "legal_level": "行政监管措施",
+          "material_nature": "监管措施",
+          "officiality": "官方",
+          "priority": "P0",
+          "content_carrier": "HTML/PDF",
+          "update_frequency": "高频",
+          "scope_strategy": "全量后私募分类"
+        }
+      ]
+    },
+    {
+      "endpoint_id": "csrc_bafd09f4fe",
+      "url": "https://www.csrc.gov.cn/beijing/c103572/zfxxgk_zdgk.shtml?channelid=ea82afe8502d46aebea7346f0729dd85",
+      "source_system": "csrc",
+      "adapter": "csrc",
+      "scope_mode": "catalog_filter",
+      "query_sets": [
+        "private_fund_core"
+      ],
+      "default_material_lane": "case",
+      "crawlability": "B 条件可抓",
+      "recommended_access": "栏目白名单+浏览器/API混合；详情和附件落库，按URL/文号去重；单并发、5秒以上间隔。",
+      "profiles": [
+        {
+          "profile_id": "profile_19cca7780a",
+          "workbook_row": 59,
+          "name": "北京证监局监管措施",
+          "description": "北京辖区警示函、责令改正等措施。",
+          "coverage": "募集销售、投向、关联交易、信息披露、内控和人员履职",
+          "effect": "行政监管措施；执法案例",
+          "publisher": "北京证监局",
+          "region": "北京",
+          "legal_level": "行政监管措施",
+          "material_nature": "监管措施",
+          "officiality": "官方",
+          "priority": "P0",
+          "content_carrier": "HTML/PDF",
+          "update_frequency": "高频",
+          "scope_strategy": "全量后私募分类"
+        }
+      ]
+    },
+    {
+      "endpoint_id": "csrc_c7bbeab1d1",
+      "url": "https://www.csrc.gov.cn/csrc/c101981/zfxxgk_zdgk.shtml",
+      "source_system": "csrc",
+      "adapter": "csrc",
+      "scope_mode": "query_exhaustive",
+      "query_sets": [
+        "private_fund_core",
+        "cross_border_exit"
+      ],
+      "default_material_lane": "reference",
+      "crawlability": "B 条件可抓",
+      "recommended_access": "栏目白名单+浏览器/API混合；详情和附件落库，按URL/文号去重；单并发、5秒以上间隔。",
+      "profiles": [
+        {
+          "profile_id": "profile_cd32769839",
+          "workbook_row": 15,
+          "name": "证监会公开征求意见",
+          "description": "新规草案、起草说明和反馈，适合提前预警监管变化。",
+          "coverage": "私募基金、信息披露、减持、监管措施等未来规则",
+          "effect": "草案；征求意见材料",
+          "publisher": "中国证监会",
+          "region": "全国",
+          "legal_level": "不具正式效力",
+          "material_nature": "征求意见/反馈",
+          "officiality": "官方",
+          "priority": "P1",
+          "content_carrier": "HTML/PDF/DOC",
+          "update_frequency": "不定期",
+          "scope_strategy": "基金关键词"
+        }
+      ]
+    },
+    {
+      "endpoint_id": "csrc_de7a5aa8c6",
+      "url": "https://www.csrc.gov.cn/csrc/c101954/zfxxgk_zdgk.shtml",
+      "source_system": "csrc",
+      "adapter": "csrc",
+      "scope_mode": "query_exhaustive",
+      "query_sets": [
+        "private_fund_core",
+        "cross_border_exit"
+      ],
+      "default_material_lane": "rule",
+      "crawlability": "B 条件可抓",
+      "recommended_access": "栏目白名单+浏览器/API混合；详情和附件落库，按URL/文号去重；单并发、5秒以上间隔。",
+      "profiles": [
+        {
+          "profile_id": "profile_1b87add6c3",
+          "workbook_row": 10,
+          "name": "证监会公告",
+          "description": "证监会公告和规范性文件列表，包含规则发布、修改废止和配套安排。",
+          "coverage": "私募基金、减持、登记备案衔接、监管规则适用",
+          "effect": "规范性文件/公告；证监会公告",
+          "publisher": "中国证监会",
+          "region": "全国",
+          "legal_level": "规范性文件（视具体文件）",
+          "material_nature": "正式规则/公告",
+          "officiality": "官方",
+          "priority": "P0",
+          "content_carrier": "HTML/PDF/DOC",
+          "update_frequency": "不定期",
+          "scope_strategy": "关键词+基金主题"
+        }
+      ]
+    },
+    {
+      "endpoint_id": "csrc_e279f3741e",
+      "url": "https://www.csrc.gov.cn/shenzhen/c104330/zfxxgk_zdgk.shtml?channelid=a3d847e5be4d40a5baaf387be4a56e9b",
+      "source_system": "csrc",
+      "adapter": "csrc",
+      "scope_mode": "catalog_filter",
+      "query_sets": [
+        "private_fund_core"
+      ],
+      "default_material_lane": "case",
+      "crawlability": "B 条件可抓",
+      "recommended_access": "栏目白名单+浏览器/API混合；详情和附件落库，按URL/文号去重；单并发、5秒以上间隔。",
+      "profiles": [
+        {
+          "profile_id": "profile_c7fddc3142",
+          "workbook_row": 67,
+          "name": "深圳证监局行政处罚",
+          "description": "深圳辖区行政处罚决定书。",
+          "coverage": "私募基金利益输送、虚假报送、侵占挪用、非法募集",
+          "effect": "行政处罚决定；执法案例",
+          "publisher": "深圳证监局",
+          "region": "深圳",
+          "legal_level": "个案行政执法决定",
+          "material_nature": "行政处罚",
+          "officiality": "官方",
+          "priority": "P0",
+          "content_carrier": "HTML/PDF",
+          "update_frequency": "高频",
+          "scope_strategy": "全量后私募分类"
+        }
+      ]
+    },
+    {
+      "endpoint_id": "csrc_e5c7e4a4e5",
+      "url": "https://www.csrc.gov.cn/csrc/c100107/common_list.shtml?channelid=43fa7b1d2ced4d2a99db550a9a1c9505",
+      "source_system": "csrc",
+      "adapter": "csrc",
+      "scope_mode": "query_exhaustive",
+      "query_sets": [
+        "private_fund_core",
+        "cross_border_exit"
+      ],
+      "default_material_lane": "reference",
+      "crawlability": "B 条件可抓",
+      "recommended_access": "栏目白名单+浏览器/API混合；详情和附件落库，按URL/文号去重；单并发、5秒以上间隔。",
+      "profiles": [
+        {
+          "profile_id": "profile_dbdee2d179",
+          "workbook_row": 14,
+          "name": "证监会监管问答",
+          "description": "官方问答与监管口径补充，适合发现规则解释和实践问题。",
+          "coverage": "募集、投资运作、退出、上市审核与减持衔接",
+          "effect": "无独立规范效力；监管问答",
+          "publisher": "中国证监会",
+          "region": "全国",
+          "legal_level": "非规范性解释材料",
+          "material_nature": "监管问答",
+          "officiality": "官方",
+          "priority": "P1",
+          "content_carrier": "HTML",
+          "update_frequency": "不定期",
+          "scope_strategy": "关键词"
+        }
+      ]
+    },
+    {
+      "endpoint_id": "csrc_eba5dab830",
+      "url": "https://www.csrc.gov.cn/shanghai/c105574/common_list.shtml?channelid=2fa44a8819aa46449c7c531e024341de",
+      "source_system": "csrc",
+      "adapter": "csrc",
+      "scope_mode": "enumerable",
+      "query_sets": [],
+      "default_material_lane": "case",
+      "crawlability": "B 条件可抓",
+      "recommended_access": "栏目白名单+浏览器/API混合；详情和附件落库，按URL/文号去重；单并发、5秒以上间隔。",
+      "profiles": [
+        {
+          "profile_id": "profile_b48dad0533",
+          "workbook_row": 64,
+          "name": "上海证监局行政处罚工作通讯",
+          "description": "处罚案例复盘和执法工作材料，可能提供决定书以外的案例说明。",
+          "coverage": "执法趋势、典型问题、程序与警示",
+          "effect": "无独立规范效力；执法通讯",
+          "publisher": "上海证监局",
+          "region": "上海",
+          "legal_level": "非规范性执法材料",
+          "material_nature": "案例通讯",
+          "officiality": "官方",
+          "priority": "P1",
+          "content_carrier": "HTML/DOC/PDF",
+          "update_frequency": "不定期",
+          "scope_strategy": "全量"
+        }
+      ]
+    },
+    {
+      "endpoint_id": "fgk_chinatax_gov_cn_61921aec82",
+      "url": "https://fgk.chinatax.gov.cn/",
+      "source_system": "fgk_chinatax_gov_cn",
+      "adapter": "http_html",
+      "scope_mode": "query_exhaustive",
+      "query_sets": [
+        "private_fund_core",
+        "tax_aml"
+      ],
+      "default_material_lane": "rule",
+      "crawlability": "B 条件可抓",
+      "recommended_access": "浏览器/API混合；限定创投、合伙企业和股权转让关键词，低频分页。",
+      "profiles": [
+        {
+          "profile_id": "profile_0e186792d8",
+          "workbook_row": 39,
+          "name": "国家税务总局政策法规库",
+          "description": "税收法律、行政法规、规章、财税文件和税务规范性文件统一检索，并标注效力状态。",
+          "coverage": "合伙企业所得税、创投70%抵扣、单一投资基金核算、股权转让、增值税",
+          "effect": "税收法律至规范性文件；政策法规库",
+          "publisher": "国家税务总局",
+          "region": "全国",
+          "legal_level": "依具体文件",
+          "material_nature": "正式税收规则",
+          "officiality": "官方",
+          "priority": "P0",
+          "content_carrier": "动态网页/HTML",
+          "update_frequency": "不定期",
+          "scope_strategy": "关键词专题"
+        }
+      ]
+    },
+    {
+      "endpoint_id": "flk_npc_gov_cn_1dcaf29c07",
+      "url": "https://flk.npc.gov.cn/",
+      "source_system": "flk_npc_gov_cn",
+      "adapter": "http_html",
+      "scope_mode": "query_exhaustive",
+      "query_sets": [
+        "private_fund_core",
+        "tax_aml"
+      ],
+      "default_material_lane": "rule",
+      "crawlability": "B 条件可抓",
+      "recommended_access": "使用受控浏览器或经确认的公开检索接口；保留会话与查询参数，禁止高并发枚举。",
+      "profiles": [
+        {
+          "profile_id": "profile_542ad0598a",
+          "workbook_row": 2,
+          "name": "国家法律法规数据库",
+          "description": "全国人大常委会建设的国家法律法规统一检索入口，适合作为上位法权威底座。",
+          "coverage": "基金法、证券法、公司法、合伙企业法、民法典、刑法、行政处罚法等",
+          "effect": "法律；法律文本及历史沿革",
+          "publisher": "全国人大常委会",
+          "region": "全国",
+          "legal_level": "法律",
+          "material_nature": "正式规则",
+          "officiality": "官方",
+          "priority": "P0",
+          "content_carrier": "动态网页/可下载文本",
+          "update_frequency": "不定期",
+          "scope_strategy": "关键词+核心法全量"
+        }
+      ]
+    },
+    {
+      "endpoint_id": "gov_cn_2a0ec76226",
+      "url": "https://www.gov.cn/gongbao/",
+      "source_system": "gov_cn",
+      "adapter": "http_html",
+      "scope_mode": "query_exhaustive",
+      "query_sets": [
+        "private_fund_core"
+      ],
+      "default_material_lane": "reference",
+      "crawlability": "B 条件可抓",
+      "recommended_access": "浏览器会话或稳定公开接口；单并发、5—10秒间隔、结果缓存；优先抓详情而非反复全文搜索。",
+      "profiles": [
+        {
+          "profile_id": "profile_5fcde11375",
+          "workbook_row": 6,
+          "name": "国务院公报",
+          "description": "核对行政法规、国务院文件和部门规章正式公布情况的权威补充源。",
+          "coverage": "国务院令、国发/国办发文件、部门规章",
+          "effect": "行政法规/政策文件/部门规章；公报文本",
+          "publisher": "国务院办公厅",
+          "region": "全国",
+          "legal_level": "依具体文件",
+          "material_nature": "政府公报",
+          "officiality": "官方",
+          "priority": "P1",
+          "content_carrier": "HTML/PDF",
+          "update_frequency": "半月/不定期",
+          "scope_strategy": "关键词+文号复核"
+        }
+      ]
+    },
+    {
+      "endpoint_id": "gov_cn_e56808693d",
+      "url": "https://www.gov.cn/zhengce/xxgk/gjgzk/index.htm",
+      "source_system": "gov_cn",
+      "adapter": "http_html",
+      "scope_mode": "query_exhaustive",
+      "query_sets": [
+        "private_fund_core"
+      ],
+      "default_material_lane": "rule",
+      "crawlability": "B 条件可抓",
+      "recommended_access": "浏览器会话或稳定公开接口；单并发、5—10秒间隔、结果缓存；优先抓详情而非反复全文搜索。",
+      "profiles": [
+        {
+          "profile_id": "profile_03a67ecb0d",
+          "workbook_row": 4,
+          "name": "国家规章库",
+          "description": "现行有效部门规章和地方政府规章正式版本的统一入口。",
+          "coverage": "证监会、人民银行、发改委、财政部等部门规章及三地政府规章",
+          "effect": "部门规章/地方政府规章；正式文本",
+          "publisher": "国务院办公厅",
+          "region": "全国",
+          "legal_level": "部门规章/地方政府规章",
+          "material_nature": "正式规则",
+          "officiality": "官方",
+          "priority": "P0",
+          "content_carrier": "动态网页/附件",
+          "update_frequency": "不定期",
+          "scope_strategy": "关键词+发文机关"
+        }
+      ]
+    },
+    {
+      "endpoint_id": "gzw_sh_gov_cn_229de89cc5",
+      "url": "https://www.gzw.sh.gov.cn/shgzw_fzjs_fzjs/",
+      "source_system": "gzw_sh_gov_cn",
+      "adapter": "http_html",
+      "scope_mode": "query_exhaustive",
+      "query_sets": [
+        "private_fund_core",
+        "state_capital"
+      ],
+      "default_material_lane": "case",
+      "crawlability": "B 条件可抓",
+      "recommended_access": "低频HTML抓取+详情/附件；10秒以上超时、失败熔断；以金融发展/产权/评估栏目白名单为主。",
+      "profiles": [
+        {
+          "profile_id": "profile_ddb4cb1adb",
+          "workbook_row": 83,
+          "name": "上海市国资委法治建设/案例分析",
+          "description": "国企法治案例库、合规问答和法治工作材料。",
+          "coverage": "国资交易、评估、合同、治理和责任追究案例",
+          "effect": "无独立规范效力；案例/合规材料",
+          "publisher": "上海市国资委",
+          "region": "上海",
+          "legal_level": "非规范性材料",
+          "material_nature": "国企法治案例",
+          "officiality": "官方",
+          "priority": "P2",
+          "content_carrier": "HTML/PDF",
+          "update_frequency": "不定期",
+          "scope_strategy": "关键词"
+        }
+      ]
+    },
+    {
+      "endpoint_id": "gzw_sh_gov_cn_4c884b3ac3",
+      "url": "https://www.gzw.sh.gov.cn/shgzw_fzjs/",
+      "source_system": "gzw_sh_gov_cn",
+      "adapter": "http_html",
+      "scope_mode": "enumerable",
+      "query_sets": [],
+      "default_material_lane": "rule",
+      "crawlability": "B 条件可抓",
+      "recommended_access": "低频HTML抓取+详情/附件；10秒以上超时、失败熔断；以金融发展/产权/评估栏目白名单为主。",
+      "profiles": [
+        {
+          "profile_id": "profile_3e29ad565f",
+          "workbook_row": 80,
+          "name": "上海市国资委政策法规",
+          "description": "规范性文件、国资监管文件、政策解读和意见征集的总入口。",
+          "coverage": "国资基金设立投资退出、产权交易、资产评估、参股管理、尽职免责",
+          "effect": "地方国资规范性文件/监管文件/解读",
+          "publisher": "上海市国资委",
+          "region": "上海",
+          "legal_level": "依具体文件",
+          "material_nature": "国资规则综合入口",
+          "officiality": "官方",
+          "priority": "P0",
+          "content_carrier": "HTML/PDF",
+          "update_frequency": "不定期",
+          "scope_strategy": "全量"
+        }
+      ]
+    },
+    {
+      "endpoint_id": "gzw_sh_gov_cn_5969a7dfc2",
+      "url": "https://www.gzw.sh.gov.cn/zcwj_gzjgwj/index.html",
+      "source_system": "gzw_sh_gov_cn",
+      "adapter": "http_html",
+      "scope_mode": "enumerable",
+      "query_sets": [],
+      "default_material_lane": "rule",
+      "crawlability": "B 条件可抓",
+      "recommended_access": "低频HTML抓取+详情/附件；10秒以上超时、失败熔断；以金融发展/产权/评估栏目白名单为主。",
+      "profiles": [
+        {
+          "profile_id": "profile_bc2c8ca8c4",
+          "workbook_row": 81,
+          "name": "上海市国资委国资监管文件",
+          "description": "按综合监管、产权管理、资产评估、金融发展、监督问责等分类。",
+          "coverage": "私募股权基金业务管理、考核评价与尽职免责、基金份额转让、参股管理",
+          "effect": "地方国资监管文件/规范性文件",
+          "publisher": "上海市国资委",
+          "region": "上海",
+          "legal_level": "地方国资规范性文件/监管文件",
+          "material_nature": "正式国资规则",
+          "officiality": "官方",
+          "priority": "P0",
+          "content_carrier": "HTML/PDF",
+          "update_frequency": "不定期",
+          "scope_strategy": "重点分类全量"
+        }
+      ]
+    },
+    {
+      "endpoint_id": "gzw_sh_gov_cn_eb12d6dc52",
+      "url": "https://www.gzw.sh.gov.cn/shgzw_fzjs_zcjd/",
+      "source_system": "gzw_sh_gov_cn",
+      "adapter": "http_html",
+      "scope_mode": "enumerable",
+      "query_sets": [],
+      "default_material_lane": "reference",
+      "crawlability": "B 条件可抓",
+      "recommended_access": "低频HTML抓取+详情/附件；10秒以上超时、失败熔断；以金融发展/产权/评估栏目白名单为主。",
+      "profiles": [
+        {
+          "profile_id": "profile_54cdb5948e",
+          "workbook_row": 82,
+          "name": "上海市国资委政策解读",
+          "description": "国资基金、产权交易、参股管理等政策解读。",
+          "coverage": "国资基金治理、授权放权、评估、投决、激励、退出和尽职免责",
+          "effect": "无独立规范效力；政策解读",
+          "publisher": "上海市国资委",
+          "region": "上海",
+          "legal_level": "非规范性解释材料",
+          "material_nature": "政策解读",
+          "officiality": "官方",
+          "priority": "P0",
+          "content_carrier": "HTML/PDF",
+          "update_frequency": "不定期",
+          "scope_strategy": "基金/产权相关全量"
+        }
+      ]
+    },
+    {
+      "endpoint_id": "jjs_mof_gov_cn_5dc1013ec0",
+      "url": "https://jjs.mof.gov.cn/tongzhigonggao/",
+      "source_system": "jjs_mof_gov_cn",
+      "adapter": "http_html",
+      "scope_mode": "query_exhaustive",
+      "query_sets": [
+        "private_fund_core",
+        "state_capital"
+      ],
+      "default_material_lane": "reference",
+      "crawlability": "A 直接可抓",
+      "recommended_access": "标准HTTP抓取；1—2并发、2—5秒间隔、条件请求、缓存和失败熔断。",
+      "profiles": [
+        {
+          "profile_id": "profile_2f023b71a1",
+          "workbook_row": 38,
+          "name": "财政部经济建设司通知公告",
+          "description": "政府投资基金、产业发展财政资金等专项政策的业务司局入口。",
+          "coverage": "政府投资基金设立、注资、绩效、产业基金",
+          "effect": "财政政策/通知；司局发布",
+          "publisher": "财政部经济建设司",
+          "region": "全国",
+          "legal_level": "依具体文件",
+          "material_nature": "通知公告/政策",
+          "officiality": "官方",
+          "priority": "P1",
+          "content_carrier": "HTML/PDF",
+          "update_frequency": "不定期",
+          "scope_strategy": "关键词"
+        }
+      ]
+    },
+    {
+      "endpoint_id": "jr_sz_gov_cn_1ec104680a",
+      "url": "https://jr.sz.gov.cn/sjrb/xxgk/zcfg/gfxwjcx/index.html",
+      "source_system": "jr_sz_gov_cn",
+      "adapter": "http_html",
+      "scope_mode": "catalog_filter",
+      "query_sets": [
+        "private_fund_core",
+        "cross_border_exit"
+      ],
+      "default_material_lane": "rule",
+      "crawlability": "B 条件可抓",
+      "recommended_access": "标准HTTP为主、浏览器回退；长超时、低并发、栏目白名单，定期验证分页接口。",
+      "profiles": [
+        {
+          "profile_id": "profile_cd1089ce30",
+          "workbook_row": 78,
+          "name": "深圳市地方金融管理局规范性文件查询",
+          "description": "规范性文件专门查询入口，可辅助识别现行有效文件。",
+          "coverage": "QFLP、地方金融监管、创业投资支持",
+          "effect": "行政规范性文件",
+          "publisher": "深圳市地方金融管理局",
+          "region": "深圳",
+          "legal_level": "行政规范性文件",
+          "material_nature": "正式地方规则",
+          "officiality": "官方",
+          "priority": "P1",
+          "content_carrier": "动态检索/HTML",
+          "update_frequency": "不定期",
+          "scope_strategy": "元数据全量+关键词"
+        }
+      ]
+    },
+    {
+      "endpoint_id": "jr_sz_gov_cn_9f67e5f846",
+      "url": "https://jr.sz.gov.cn/sjrb/ywzsk/index.html",
+      "source_system": "jr_sz_gov_cn",
+      "adapter": "http_html",
+      "scope_mode": "query_exhaustive",
+      "query_sets": [
+        "private_fund_core",
+        "cross_border_exit"
+      ],
+      "default_material_lane": "reference",
+      "crawlability": "B 条件可抓",
+      "recommended_access": "标准HTTP为主、浏览器回退；长超时、低并发、栏目白名单，定期验证分页接口。",
+      "profiles": [
+        {
+          "profile_id": "profile_62c56855f5",
+          "workbook_row": 79,
+          "name": "深圳市地方金融管理局业务知识库",
+          "description": "包含创业投资企业备案与年检等操作问答。",
+          "coverage": "创投企业备案、年检、QFLP和地方金融业务",
+          "effect": "无独立规范效力；业务问答",
+          "publisher": "深圳市地方金融管理局",
+          "region": "深圳",
+          "legal_level": "非规范性解释材料",
+          "material_nature": "业务问答",
+          "officiality": "官方",
+          "priority": "P1",
+          "content_carrier": "动态HTML",
+          "update_frequency": "不定期",
+          "scope_strategy": "创投/QFLP问答"
+        }
+      ]
+    },
+    {
+      "endpoint_id": "jr_sz_gov_cn_e73d678b6a",
+      "url": "https://jr.sz.gov.cn/sjrb/xxgk/zcfg/dfjrzc/index.html",
+      "source_system": "jr_sz_gov_cn",
+      "adapter": "http_html",
+      "scope_mode": "query_exhaustive",
+      "query_sets": [
+        "private_fund_core",
+        "state_capital",
+        "cross_border_exit"
+      ],
+      "default_material_lane": "reference",
+      "crawlability": "B 条件可抓",
+      "recommended_access": "标准HTTP为主、浏览器回退；长超时、低并发、栏目白名单，定期验证分页接口。",
+      "profiles": [
+        {
+          "profile_id": "profile_2eda05423b",
+          "workbook_row": 76,
+          "name": "深圳市地方金融管理局金融政策",
+          "description": "深圳地方金融政策集中入口。",
+          "coverage": "私募股权、创业投资、QFLP、政府引导基金、金融支持政策",
+          "effect": "地方性法规/规章/规范性文件/政策",
+          "publisher": "深圳市地方金融管理局",
+          "region": "深圳",
+          "legal_level": "依具体文件",
+          "material_nature": "地方金融政策",
+          "officiality": "官方",
+          "priority": "P0",
+          "content_carrier": "HTML/PDF",
+          "update_frequency": "不定期",
+          "scope_strategy": "关键词专题"
+        }
+      ]
+    },
+    {
+      "endpoint_id": "jr_sz_gov_cn_e9252a97c5",
+      "url": "https://jr.sz.gov.cn/sjrb/xxgk/tzgg/index.html",
+      "source_system": "jr_sz_gov_cn",
+      "adapter": "http_html",
+      "scope_mode": "query_exhaustive",
+      "query_sets": [
+        "private_fund_core",
+        "cross_border_exit"
+      ],
+      "default_material_lane": "reference",
+      "crawlability": "B 条件可抓",
+      "recommended_access": "标准HTTP为主、浏览器回退；长超时、低并发、栏目白名单，定期验证分页接口。",
+      "profiles": [
+        {
+          "profile_id": "profile_e4e9742c17",
+          "workbook_row": 77,
+          "name": "深圳市地方金融管理局通知公告",
+          "description": "地方金融通知、风险提示和试点安排。",
+          "coverage": "创投备案、QFLP、私募风险、非法金融活动",
+          "effect": "通知公告/风险提示",
+          "publisher": "深圳市地方金融管理局",
+          "region": "深圳",
+          "legal_level": "依具体材料",
+          "material_nature": "通知公告",
+          "officiality": "官方",
+          "priority": "P1",
+          "content_carrier": "HTML/附件",
+          "update_frequency": "高频",
+          "scope_strategy": "关键词"
+        }
+      ]
+    },
+    {
+      "endpoint_id": "jrj_beijing_gov_cn_3989b0ed5c",
+      "url": "https://jrj.beijing.gov.cn/2024zcwj/bjszcfg2024/",
+      "source_system": "jrj_beijing_gov_cn",
+      "adapter": "http_html",
+      "scope_mode": "query_exhaustive",
+      "query_sets": [
+        "private_fund_core",
+        "cross_border_exit"
+      ],
+      "default_material_lane": "reference",
+      "crawlability": "A 直接可抓",
+      "recommended_access": "标准HTTP抓取；1—2并发、2—5秒间隔、条件请求、缓存和失败熔断。",
+      "profiles": [
+        {
+          "profile_id": "profile_c8435ca3f4",
+          "workbook_row": 69,
+          "name": "北京市地方金融管理局政策法规",
+          "description": "可按发文单位、文号、日期、有效性和主题检索北京市金融政策。",
+          "coverage": "股权投资、创业投资、QFLP、区域性股权市场和地方金融监管",
+          "effect": "地方性法规/规章/规范性文件/政策",
+          "publisher": "北京市地方金融管理局",
+          "region": "北京",
+          "legal_level": "依具体文件",
+          "material_nature": "地方金融政策",
+          "officiality": "官方",
+          "priority": "P1",
+          "content_carrier": "动态检索/HTML",
+          "update_frequency": "不定期",
+          "scope_strategy": "关键词专题"
+        }
+      ]
+    },
+    {
+      "endpoint_id": "jrj_beijing_gov_cn_5734f7774a",
+      "url": "https://jrj.beijing.gov.cn/tztg/",
+      "source_system": "jrj_beijing_gov_cn",
+      "adapter": "http_html",
+      "scope_mode": "query_exhaustive",
+      "query_sets": [
+        "private_fund_core",
+        "cross_border_exit"
+      ],
+      "default_material_lane": "reference",
+      "crawlability": "A 直接可抓",
+      "recommended_access": "标准HTTP抓取；1—2并发、2—5秒间隔、条件请求、缓存和失败熔断。",
+      "profiles": [
+        {
+          "profile_id": "profile_aeb847df11",
+          "workbook_row": 70,
+          "name": "北京市地方金融管理局通知公告",
+          "description": "含备案创业投资企业年检等执行通知。",
+          "coverage": "创投备案年检、QFLP、行业活动和风险提示",
+          "effect": "通知公告/执行材料",
+          "publisher": "北京市地方金融管理局",
+          "region": "北京",
+          "legal_level": "依具体材料",
+          "material_nature": "通知公告",
+          "officiality": "官方",
+          "priority": "P1",
+          "content_carrier": "HTML/附件",
+          "update_frequency": "高频",
+          "scope_strategy": "关键词"
+        }
+      ]
+    },
+    {
+      "endpoint_id": "jrj_beijing_gov_cn_b36d82d38f",
+      "url": "https://jrj.beijing.gov.cn/qaknowledge/",
+      "source_system": "jrj_beijing_gov_cn",
+      "adapter": "http_html",
+      "scope_mode": "query_exhaustive",
+      "query_sets": [
+        "private_fund_core",
+        "cross_border_exit"
+      ],
+      "default_material_lane": "reference",
+      "crawlability": "A 直接可抓",
+      "recommended_access": "标准HTTP抓取；1—2并发、2—5秒间隔、条件请求、缓存和失败熔断。",
+      "profiles": [
+        {
+          "profile_id": "profile_293d888731",
+          "workbook_row": 71,
+          "name": "北京市地方金融管理局问答知识库",
+          "description": "包含QFLP等地方金融业务问答。",
+          "coverage": "QFLP试点、创业投资备案、地方金融条例",
+          "effect": "无独立规范效力；官方问答",
+          "publisher": "北京市地方金融管理局",
+          "region": "北京",
+          "legal_level": "非规范性解释材料",
+          "material_nature": "业务问答",
+          "officiality": "官方",
+          "priority": "P2",
+          "content_carrier": "HTML",
+          "update_frequency": "低频",
+          "scope_strategy": "关键词"
+        }
+      ]
+    },
+    {
+      "endpoint_id": "jrj_sh_gov_cn_33bf48747e",
+      "url": "https://jrj.sh.gov.cn/jcgk-zcjd/index.html",
+      "source_system": "jrj_sh_gov_cn",
+      "adapter": "http_html",
+      "scope_mode": "query_exhaustive",
+      "query_sets": [
+        "private_fund_core",
+        "cross_border_exit"
+      ],
+      "default_material_lane": "reference",
+      "crawlability": "A 直接可抓",
+      "recommended_access": "标准HTTP抓取；1—2并发、2—5秒间隔、条件请求、缓存和失败熔断。",
+      "profiles": [
+        {
+          "profile_id": "profile_d585a86ba6",
+          "workbook_row": 73,
+          "name": "上海市地方金融管理局政策解读",
+          "description": "上海金融政策官方解读。",
+          "coverage": "股权投资政策、QFLP、金融改革与地方监管口径",
+          "effect": "无独立规范效力；政策解读",
+          "publisher": "上海市地方金融管理局",
+          "region": "上海",
+          "legal_level": "非规范性解释材料",
+          "material_nature": "政策解读",
+          "officiality": "官方",
+          "priority": "P1",
+          "content_carrier": "HTML",
+          "update_frequency": "不定期",
+          "scope_strategy": "关键词"
+        }
+      ]
+    },
+    {
+      "endpoint_id": "jrj_sh_gov_cn_3ebbe1b4eb",
+      "url": "https://jrj.sh.gov.cn/jcgk-zcwj/index.html",
+      "source_system": "jrj_sh_gov_cn",
+      "adapter": "http_html",
+      "scope_mode": "query_exhaustive",
+      "query_sets": [
+        "private_fund_core",
+        "cross_border_exit"
+      ],
+      "default_material_lane": "reference",
+      "crawlability": "A 直接可抓",
+      "recommended_access": "标准HTTP抓取；1—2并发、2—5秒间隔、条件请求、缓存和失败熔断。",
+      "profiles": [
+        {
+          "profile_id": "profile_fbd6e00680",
+          "workbook_row": 72,
+          "name": "上海市地方金融管理局政策文件",
+          "description": "按深化改革、服务实体、地方监管等分类，并有年度汇编。",
+          "coverage": "股权投资行业、QFLP、S基金、私募机构服务、非法金融活动",
+          "effect": "地方性法规/规章/规范性文件/政策",
+          "publisher": "上海市地方金融管理局",
+          "region": "上海",
+          "legal_level": "依具体文件",
+          "material_nature": "地方金融政策",
+          "officiality": "官方",
+          "priority": "P0",
+          "content_carrier": "HTML/PDF",
+          "update_frequency": "不定期",
+          "scope_strategy": "关键词专题"
+        }
+      ]
+    },
+    {
+      "endpoint_id": "jrj_sh_gov_cn_a1142c7d64",
+      "url": "https://jrj.sh.gov.cn/XZCF233/index.html",
+      "source_system": "jrj_sh_gov_cn",
+      "adapter": "http_html",
+      "scope_mode": "query_exhaustive",
+      "query_sets": [
+        "private_fund_core"
+      ],
+      "default_material_lane": "case",
+      "crawlability": "A 直接可抓",
+      "recommended_access": "标准HTTP抓取；1—2并发、2—5秒间隔、条件请求、缓存和失败熔断。",
+      "profiles": [
+        {
+          "profile_id": "profile_0a9d39bd25",
+          "workbook_row": 75,
+          "name": "上海市地方金融管理局行政处罚",
+          "description": "地方金融管理局行政处罚信息，虽非证监会私募执法，但可覆盖非法金融活动和相关地方监管。",
+          "coverage": "非法金融活动、地方金融组织、私募机构外围风险",
+          "effect": "地方行政处罚决定",
+          "publisher": "上海市地方金融管理局",
+          "region": "上海",
+          "legal_level": "个案行政执法决定",
+          "material_nature": "行政处罚",
+          "officiality": "官方",
+          "priority": "P2",
+          "content_carrier": "HTML/表格",
+          "update_frequency": "低频",
+          "scope_strategy": "关键词"
+        }
+      ]
+    },
+    {
+      "endpoint_id": "jrj_sh_gov_cn_dbb53199fc",
+      "url": "https://jrj.sh.gov.cn/smjg/index.html",
+      "source_system": "jrj_sh_gov_cn",
+      "adapter": "http_html",
+      "scope_mode": "enumerable",
+      "query_sets": [],
+      "default_material_lane": "reference",
+      "crawlability": "A 直接可抓",
+      "recommended_access": "标准HTTP抓取；1—2并发、2—5秒间隔、条件请求、缓存和失败熔断。",
+      "profiles": [
+        {
+          "profile_id": "profile_7dfd32aea7",
+          "workbook_row": 74,
+          "name": "上海市私募机构设立服务信息公示",
+          "description": "私募机构设立服务和公示入口。",
+          "coverage": "私募管理人设立、登记前地方服务、机构准入信息",
+          "effect": "行政服务/公示信息",
+          "publisher": "上海市地方金融管理局",
+          "region": "上海",
+          "legal_level": "程序性材料",
+          "material_nature": "私募机构设立服务",
+          "officiality": "官方",
+          "priority": "P1",
+          "content_carrier": "HTML/附件",
+          "update_frequency": "低频",
+          "scope_strategy": "全量"
+        }
+      ]
+    },
+    {
+      "endpoint_id": "mof_gov_cn_e2884ae192",
+      "url": "https://www.mof.gov.cn/zhengwuxinxi/zhengcefabu/",
+      "source_system": "mof_gov_cn",
+      "adapter": "http_html",
+      "scope_mode": "query_exhaustive",
+      "query_sets": [
+        "private_fund_core",
+        "state_capital",
+        "tax_aml"
+      ],
+      "default_material_lane": "rule",
+      "crawlability": "A 直接可抓",
+      "recommended_access": "标准HTTP抓取；1—2并发、2—5秒间隔、条件请求、缓存和失败熔断。",
+      "profiles": [
+        {
+          "profile_id": "profile_495609a529",
+          "workbook_row": 37,
+          "name": "财政部政策发布",
+          "description": "财政部及联合发文政策入口。",
+          "coverage": "政府投资基金、财政出资、税收政策、国有金融资本",
+          "effect": "部门规章/规范性文件/财税文件",
+          "publisher": "财政部",
+          "region": "全国",
+          "legal_level": "依具体文件",
+          "material_nature": "正式规则/政策文件",
+          "officiality": "官方",
+          "priority": "P0",
+          "content_carrier": "HTML/PDF",
+          "update_frequency": "不定期",
+          "scope_strategy": "关键词"
+        },
+        {
+          "profile_id": "profile_702c06d50c",
+          "workbook_row": 46,
+          "name": "财政部国有金融资本规则（在政策发布中筛选）",
+          "description": "财政部履行国有金融资本出资人职责相关规则需与国资委口径区分。",
+          "coverage": "国有金融资本产权、评估、转让、金融企业投资基金",
+          "effect": "部门规章/规范性文件",
+          "publisher": "财政部",
+          "region": "全国",
+          "legal_level": "依具体文件",
+          "material_nature": "国有金融资本规则",
+          "officiality": "官方",
+          "priority": "P1",
+          "content_carrier": "HTML/PDF",
+          "update_frequency": "不定期",
+          "scope_strategy": "关键词"
+        }
+      ]
+    },
+    {
+      "endpoint_id": "ndrc_gov_cn_b2fb15e244",
+      "url": "https://www.ndrc.gov.cn/xxgk/zcfb/tz/",
+      "source_system": "ndrc_gov_cn",
+      "adapter": "http_html",
+      "scope_mode": "query_exhaustive",
+      "query_sets": [
+        "private_fund_core"
+      ],
+      "default_material_lane": "reference",
+      "crawlability": "B 条件可抓",
+      "recommended_access": "从生产部署网络复测；使用栏目白名单和低频HTML抓取，附件单独下载；异常时切换官方公报/规则库补漏。",
+      "profiles": [
+        {
+          "profile_id": "profile_ff2d7642b3",
+          "workbook_row": 36,
+          "name": "国家发展改革委通知",
+          "description": "发改委通知列表，包含创业投资企业年检、政府基金评价等执行性安排。",
+          "coverage": "创投备案年检、政府基金登记评价、产业投向",
+          "effect": "通知/执行性规范文件",
+          "publisher": "国家发展改革委",
+          "region": "全国",
+          "legal_level": "依具体文件",
+          "material_nature": "通知公告",
+          "officiality": "官方",
+          "priority": "P1",
+          "content_carrier": "HTML/PDF",
+          "update_frequency": "不定期",
+          "scope_strategy": "关键词"
+        }
+      ]
+    },
+    {
+      "endpoint_id": "ndrc_gov_cn_d97fcd4c71",
+      "url": "https://www.ndrc.gov.cn/xxgk/zcfb/",
+      "source_system": "ndrc_gov_cn",
+      "adapter": "http_html",
+      "scope_mode": "catalog_filter",
+      "query_sets": [
+        "private_fund_core",
+        "state_capital"
+      ],
+      "default_material_lane": "rule",
+      "crawlability": "B 条件可抓",
+      "recommended_access": "从生产部署网络复测；使用栏目白名单和低频HTML抓取，附件单独下载；异常时切换官方公报/规则库补漏。",
+      "profiles": [
+        {
+          "profile_id": "profile_a6212d25ae",
+          "workbook_row": 34,
+          "name": "国家发展改革委令",
+          "description": "发改委规章与政策总入口。",
+          "coverage": "创业投资企业管理、政府投资基金、产业投向、市场准入",
+          "effect": "部门规章；发展改革委令",
+          "publisher": "国家发展改革委",
+          "region": "全国",
+          "legal_level": "部门规章",
+          "material_nature": "正式规则",
+          "officiality": "官方",
+          "priority": "P0",
+          "content_carrier": "HTML/PDF/OFD",
+          "update_frequency": "不定期",
+          "scope_strategy": "元数据全量+关键词"
+        }
+      ]
+    },
+    {
+      "endpoint_id": "ndrc_gov_cn_f274ef8a8e",
+      "url": "https://www.ndrc.gov.cn/xxgk/zcfb/ghxwj/",
+      "source_system": "ndrc_gov_cn",
+      "adapter": "http_html",
+      "scope_mode": "query_exhaustive",
+      "query_sets": [
+        "private_fund_core"
+      ],
+      "default_material_lane": "rule",
+      "crawlability": "B 条件可抓",
+      "recommended_access": "从生产部署网络复测；使用栏目白名单和低频HTML抓取，附件单独下载；异常时切换官方公报/规则库补漏。",
+      "profiles": [
+        {
+          "profile_id": "profile_0a413db409",
+          "workbook_row": 35,
+          "name": "国家发展改革委规范性文件",
+          "description": "发改委规范性文件列表，政府出资产业投资基金和投向评价等常在此发布。",
+          "coverage": "政府出资产业投资基金、创业投资、产业政策和投向评价",
+          "effect": "部门规范性文件",
+          "publisher": "国家发展改革委",
+          "region": "全国",
+          "legal_level": "部门规范性文件",
+          "material_nature": "正式规则",
+          "officiality": "官方",
+          "priority": "P0",
+          "content_carrier": "HTML/PDF/OFD",
+          "update_frequency": "不定期",
+          "scope_strategy": "关键词"
+        }
+      ]
+    },
+    {
+      "endpoint_id": "neeq_com_cn_23c27ef142",
+      "url": "https://www.neeq.com.cn/",
+      "source_system": "neeq_com_cn",
+      "adapter": "http_html",
+      "scope_mode": "query_exhaustive",
+      "query_sets": [
+        "private_fund_core",
+        "cross_border_exit"
+      ],
+      "default_material_lane": "rule",
+      "crawlability": "A 直接可抓",
+      "recommended_access": "标准HTTP抓取；1—2并发、2—5秒间隔、条件请求、缓存和失败熔断。",
+      "profiles": [
+        {
+          "profile_id": "profile_07b6871a54",
+          "workbook_row": 55,
+          "name": "全国股转系统业务规则",
+          "description": "新三板挂牌、定向发行和股份转让规则，关系PE/VC被投项目退出。",
+          "coverage": "挂牌、定增、协议转让、限售、终止挂牌",
+          "effect": "市场自律规则/业务指南",
+          "publisher": "全国股转公司",
+          "region": "全国",
+          "legal_level": "自律规则",
+          "material_nature": "业务规则",
+          "officiality": "官方/自律组织",
+          "priority": "P2",
+          "content_carrier": "动态HTML/PDF",
+          "update_frequency": "不定期",
+          "scope_strategy": "重点主题"
+        }
+      ]
+    },
+    {
+      "endpoint_id": "neris_257e3e269c",
+      "url": "https://neris.csrc.gov.cn/portal/portalHome/index",
+      "source_system": "neris",
+      "adapter": "neris",
+      "scope_mode": "query_exhaustive",
+      "query_sets": [
+        "private_fund_core"
+      ],
+      "default_material_lane": "reference",
+      "crawlability": "B 条件可抓",
+      "recommended_access": "浏览器观察网络后仅使用公开接口；固定查询范围，维护字段/分页回归测试。",
+      "profiles": [
+        {
+          "profile_id": "profile_6777d3c055",
+          "workbook_row": 8,
+          "name": "证监会政务服务平台（NERIS）",
+          "description": "已建信源；包含行政许可、办事指南、依申请公开等政务服务入口。",
+          "coverage": "基金经营机构办事事项、监管流程、申请材料和办理口径",
+          "effect": "办事指南/行政许可信息；程序性材料",
+          "publisher": "中国证监会",
+          "region": "全国",
+          "legal_level": "程序性规范/办事规则",
+          "material_nature": "办事指南/许可信息",
+          "officiality": "官方",
+          "priority": "P1",
+          "content_carrier": "动态门户/登录态",
+          "update_frequency": "不定期",
+          "scope_strategy": "基金相关事项"
+        }
+      ]
+    },
+    {
+      "endpoint_id": "neris_2a4d856928",
+      "url": "https://neris.csrc.gov.cn/falvfagui/",
+      "source_system": "neris",
+      "adapter": "neris",
+      "scope_mode": "enumerable",
+      "query_sets": [],
+      "default_material_lane": "rule",
+      "crawlability": "B 条件可抓",
+      "recommended_access": "浏览器观察网络后仅使用公开接口；固定查询范围，维护字段/分页回归测试。",
+      "profiles": [
+        {
+          "profile_id": "profile_7fe2080d25",
+          "workbook_row": 7,
+          "name": "证监会法律法规数据库（NERIS）",
+          "description": "已建信源；覆盖证券期货领域法律、法规、规章、规范性文件及效力信息。",
+          "coverage": "私募基金监管、创业投资差异化监管、募集、运作、披露、退出",
+          "effect": "依具体文件；法规规则数据库",
+          "publisher": "中国证监会",
+          "region": "全国",
+          "legal_level": "法律至规范性文件",
+          "material_nature": "正式规则",
+          "officiality": "官方",
+          "priority": "P0",
+          "content_carrier": "结构化动态网页",
+          "update_frequency": "不定期",
+          "scope_strategy": "基金主题全量"
+        }
+      ]
+    },
+    {
+      "endpoint_id": "pbc_gov_cn_a0c8f9156f",
+      "url": "https://www.pbc.gov.cn/tiaofasi/144941/3581332/index.html",
+      "source_system": "pbc_gov_cn",
+      "adapter": "http_html",
+      "scope_mode": "query_exhaustive",
+      "query_sets": [
+        "private_fund_core",
+        "cross_border_exit",
+        "tax_aml"
+      ],
+      "default_material_lane": "rule",
+      "crawlability": "A 直接可抓",
+      "recommended_access": "标准HTTP抓取；1—2并发、2—5秒间隔、条件请求、缓存和失败熔断。",
+      "profiles": [
+        {
+          "profile_id": "profile_8e93436b2b",
+          "workbook_row": 41,
+          "name": "人民银行规范性文件",
+          "description": "人民银行及联合发文规范性文件列表。",
+          "coverage": "反洗钱、跨境资金、受益所有人、非法金融活动",
+          "effect": "规范性文件/公告",
+          "publisher": "中国人民银行",
+          "region": "全国",
+          "legal_level": "规范性文件",
+          "material_nature": "正式规则",
+          "officiality": "官方",
+          "priority": "P1",
+          "content_carrier": "HTML",
+          "update_frequency": "不定期",
+          "scope_strategy": "关键词"
+        }
+      ]
+    },
+    {
+      "endpoint_id": "pbc_gov_cn_b701223979",
+      "url": "https://www.pbc.gov.cn/fanxiqianju/135153/index.html",
+      "source_system": "pbc_gov_cn",
+      "adapter": "http_html",
+      "scope_mode": "query_exhaustive",
+      "query_sets": [
+        "private_fund_core",
+        "tax_aml"
+      ],
+      "default_material_lane": "rule",
+      "crawlability": "A 直接可抓",
+      "recommended_access": "标准HTTP抓取；1—2并发、2—5秒间隔、条件请求、缓存和失败熔断。",
+      "profiles": [
+        {
+          "profile_id": "profile_76ea5998ba",
+          "workbook_row": 42,
+          "name": "人民银行反洗钱局",
+          "description": "反洗钱政策、监管动态、调查协查、制裁名单和风险评估入口。",
+          "coverage": "客户身份识别、受益所有人、可疑交易、洗钱风险与制裁名单",
+          "effect": "法律/规章/监管材料；反洗钱专题",
+          "publisher": "中国人民银行反洗钱局",
+          "region": "全国",
+          "legal_level": "依具体文件",
+          "material_nature": "规则/监管动态/风险报告",
+          "officiality": "官方",
+          "priority": "P1",
+          "content_carrier": "HTML/PDF",
+          "update_frequency": "不定期",
+          "scope_strategy": "国内规则+高风险名单"
+        }
+      ]
+    },
+    {
+      "endpoint_id": "pbc_gov_cn_ca2445266c",
+      "url": "https://www.pbc.gov.cn/tiaofasi/144941/144957/index.html",
+      "source_system": "pbc_gov_cn",
+      "adapter": "http_html",
+      "scope_mode": "query_exhaustive",
+      "query_sets": [
+        "private_fund_core",
+        "tax_aml"
+      ],
+      "default_material_lane": "rule",
+      "crawlability": "A 直接可抓",
+      "recommended_access": "标准HTTP抓取；1—2并发、2—5秒间隔、条件请求、缓存和失败熔断。",
+      "profiles": [
+        {
+          "profile_id": "profile_1285f3bc48",
+          "workbook_row": 40,
+          "name": "人民银行部门规章",
+          "description": "人民银行部门规章列表。",
+          "coverage": "反洗钱、客户尽调、受益所有人、金融基础设施",
+          "effect": "部门规章；人民银行令",
+          "publisher": "中国人民银行",
+          "region": "全国",
+          "legal_level": "部门规章",
+          "material_nature": "正式规则",
+          "officiality": "官方",
+          "priority": "P1",
+          "content_carrier": "HTML",
+          "update_frequency": "不定期",
+          "scope_strategy": "关键词"
+        }
+      ]
+    },
+    {
+      "endpoint_id": "rmfyalk_court_gov_cn_8fd2606938",
+      "url": "https://rmfyalk.court.gov.cn/",
+      "source_system": "rmfyalk_court_gov_cn",
+      "adapter": "http_html",
+      "scope_mode": "query_exhaustive",
+      "query_sets": [
+        "private_fund_core"
+      ],
+      "default_material_lane": "case",
+      "crawlability": "C 不宜无人值守",
+      "recommended_access": "以已知案号/关键词低频人工或半自动检索；优先抓最高法公开典型案例页。",
+      "profiles": [
+        {
+          "profile_id": "profile_a31b2bc77c",
+          "workbook_row": 48,
+          "name": "人民法院案例库",
+          "description": "最高人民法院建设的指导性案例和参考案例检索入口。",
+          "coverage": "基金合同、合伙争议、非法集资、挪用侵占、管理人责任",
+          "effect": "司法案例；指导/参考案例",
+          "publisher": "最高人民法院",
+          "region": "全国",
+          "legal_level": "案例指导参考",
+          "material_nature": "司法案例库",
+          "officiality": "官方",
+          "priority": "P1",
+          "content_carrier": "动态检索/登录可选",
+          "update_frequency": "持续更新",
+          "scope_strategy": "关键词"
+        }
+      ]
+    },
+    {
+      "endpoint_id": "safe_gov_cn_30d798c456",
+      "url": "https://www.safe.gov.cn/safe/zcfg/index.html",
+      "source_system": "safe_gov_cn",
+      "adapter": "http_html",
+      "scope_mode": "enumerable",
+      "query_sets": [],
+      "default_material_lane": "rule",
+      "crawlability": "A 直接可抓",
+      "recommended_access": "标准HTTP抓取；1—2并发、2—5秒间隔、条件请求、缓存和失败熔断。",
+      "profiles": [
+        {
+          "profile_id": "profile_4de1d7fac4",
+          "workbook_row": 43,
+          "name": "国家外汇管理局政策法规",
+          "description": "按综合、资本项目、跨境直接投资、跨境证券投资等分类，并提供现行有效目录。",
+          "coverage": "QFLP、跨境投资、外资入股、资金汇兑、利润和退出资金汇出",
+          "effect": "部门规章/规范性文件/目录",
+          "publisher": "国家外汇管理局",
+          "region": "全国",
+          "legal_level": "依具体文件",
+          "material_nature": "正式规则/法规目录",
+          "officiality": "官方",
+          "priority": "P0",
+          "content_carrier": "HTML/PDF",
+          "update_frequency": "不定期",
+          "scope_strategy": "重点分类全量"
+        }
+      ]
+    },
+    {
+      "endpoint_id": "safe_gov_cn_886e767207",
+      "url": "https://www.safe.gov.cn/safe/zcfg/",
+      "source_system": "safe_gov_cn",
+      "adapter": "http_html",
+      "scope_mode": "enumerable",
+      "query_sets": [],
+      "default_material_lane": "rule",
+      "crawlability": "A 直接可抓",
+      "recommended_access": "标准HTTP抓取；1—2并发、2—5秒间隔、条件请求、缓存和失败熔断。",
+      "profiles": [
+        {
+          "profile_id": "profile_7c02be8f57",
+          "workbook_row": 44,
+          "name": "外汇局现行有效法规目录（从政策法规页进入）",
+          "description": "年度更新的现行有效外汇管理主要法规目录，是效力核验的重要来源。",
+          "coverage": "跨境直接投资、外商投资企业、境外上市和资金汇兑",
+          "effect": "法规目录；效力核验材料",
+          "publisher": "国家外汇管理局",
+          "region": "全国",
+          "legal_level": "目录性权威材料",
+          "material_nature": "现行有效目录",
+          "officiality": "官方",
+          "priority": "P0",
+          "content_carrier": "PDF",
+          "update_frequency": "年度",
+          "scope_strategy": "全量"
+        }
+      ]
+    },
+    {
+      "endpoint_id": "sasac_gov_cn_57d86ad8d6",
+      "url": "https://www.sasac.gov.cn/n2588035/n2588320/n2588335/index.html",
+      "source_system": "sasac_gov_cn",
+      "adapter": "http_html",
+      "scope_mode": "query_exhaustive",
+      "query_sets": [
+        "private_fund_core",
+        "state_capital"
+      ],
+      "default_material_lane": "rule",
+      "crawlability": "B 条件可抓",
+      "recommended_access": "从生产部署网络复测；使用栏目白名单和低频HTML抓取，附件单独下载；异常时切换官方公报/规则库补漏。",
+      "profiles": [
+        {
+          "profile_id": "profile_b3f29bbd2e",
+          "workbook_row": 45,
+          "name": "国务院国资委政策法规",
+          "description": "中央企业和企业国有资产监管政策入口。",
+          "coverage": "国有产权交易、资产评估、投资监督、有限合伙国有权益、责任追究",
+          "effect": "部门规章/规范性文件",
+          "publisher": "国务院国资委",
+          "region": "全国",
+          "legal_level": "依具体文件",
+          "material_nature": "正式国资规则",
+          "officiality": "官方",
+          "priority": "P0",
+          "content_carrier": "HTML/PDF",
+          "update_frequency": "不定期",
+          "scope_strategy": "关键词+重点主题"
+        }
+      ]
+    },
+    {
+      "endpoint_id": "shanghai_chinatax_gov_cn_bac869274b",
+      "url": "https://shanghai.chinatax.gov.cn/xwdt/ztzl/zcgll/jsjf/202406/t472232.html",
+      "source_system": "shanghai_chinatax_gov_cn",
+      "adapter": "http_html",
+      "scope_mode": "enumerable",
+      "query_sets": [],
+      "default_material_lane": "reference",
+      "crawlability": "A 直接可抓",
+      "recommended_access": "标准HTTP抓取；1—2并发、2—5秒间隔、条件请求、缓存和失败熔断。",
+      "profiles": [
+        {
+          "profile_id": "profile_449dbe532b",
+          "workbook_row": 87,
+          "name": "上海税务—创业投资政策专题",
+          "description": "集中汇编创业投资企业和天使投资个人相关税收规则及有效性。",
+          "coverage": "创投70%抵扣、单一投资基金核算、合伙人所得税",
+          "effect": "税收规则汇编/政策指引",
+          "publisher": "国家税务总局上海市税务局",
+          "region": "上海/全国政策",
+          "legal_level": "依所汇编文件",
+          "material_nature": "税收专题",
+          "officiality": "官方",
+          "priority": "P1",
+          "content_carrier": "HTML/外链",
+          "update_frequency": "不定期",
+          "scope_strategy": "全量"
+        }
+      ]
+    },
+    {
+      "endpoint_id": "shanghai_gov_cn_0cf871d7d5",
+      "url": "https://www.shanghai.gov.cn/",
+      "source_system": "shanghai_gov_cn",
+      "adapter": "http_html",
+      "scope_mode": "query_exhaustive",
+      "query_sets": [
+        "private_fund_core",
+        "state_capital",
+        "cross_border_exit"
+      ],
+      "default_material_lane": "rule",
+      "crawlability": "A 直接可抓",
+      "recommended_access": "标准HTTP抓取；1—2并发、2—5秒间隔、条件请求、缓存和失败熔断。",
+      "profiles": [
+        {
+          "profile_id": "profile_63784168de",
+          "workbook_row": 84,
+          "name": "上海市政府政策文件（站内检索）",
+          "description": "上海市政府及办公厅文件的权威发布源，包含促进股权投资高质量发展、S基金等市级政策。",
+          "coverage": "股权投资、创业投资、政府引导基金、QFLP、S基金和营商政策",
+          "effect": "地方政府规章/规范性文件/政策",
+          "publisher": "上海市人民政府",
+          "region": "上海",
+          "legal_level": "依具体文件",
+          "material_nature": "市级政策文件",
+          "officiality": "官方",
+          "priority": "P0",
+          "content_carrier": "动态HTML/PDF",
+          "update_frequency": "不定期",
+          "scope_strategy": "关键词专题"
+        }
+      ]
+    },
+    {
+      "endpoint_id": "sousuo_www_gov_cn_1e2ab9ca59",
+      "url": "https://sousuo.www.gov.cn/zcwjk/policyDocumentLibrary",
+      "source_system": "sousuo_www_gov_cn",
+      "adapter": "http_html",
+      "scope_mode": "query_exhaustive",
+      "query_sets": [
+        "private_fund_core",
+        "state_capital"
+      ],
+      "default_material_lane": "rule",
+      "crawlability": "B 条件可抓",
+      "recommended_access": "浏览器会话或稳定公开接口；单并发、5—10秒间隔、结果缓存；优先抓详情而非反复全文搜索。",
+      "profiles": [
+        {
+          "profile_id": "profile_55f91231a6",
+          "workbook_row": 5,
+          "name": "国务院政策文件库",
+          "description": "国务院及国务院办公厅政策文件的集中检索入口。",
+          "coverage": "私募基金、创业投资、政府投资基金、国资国企、金融监管政策",
+          "effect": "国务院政策文件；规范性/政策性文件",
+          "publisher": "国务院办公厅",
+          "region": "全国",
+          "legal_level": "国务院政策文件",
+          "material_nature": "正式规则/政策文件",
+          "officiality": "官方",
+          "priority": "P0",
+          "content_carrier": "动态检索网页",
+          "update_frequency": "不定期",
+          "scope_strategy": "关键词"
+        }
+      ]
+    },
+    {
+      "endpoint_id": "spp_gov_cn_c71e27e208",
+      "url": "https://www.spp.gov.cn/xwfbh/dxal/",
+      "source_system": "spp_gov_cn",
+      "adapter": "http_html",
+      "scope_mode": "query_exhaustive",
+      "query_sets": [
+        "private_fund_core"
+      ],
+      "default_material_lane": "case",
+      "crawlability": "A 直接可抓",
+      "recommended_access": "标准HTTP抓取；1—2并发、2—5秒间隔、条件请求、缓存和失败熔断。",
+      "profiles": [
+        {
+          "profile_id": "profile_6a83c6c9fb",
+          "workbook_row": 50,
+          "name": "最高人民检察院典型案例",
+          "description": "最高检典型案例栏目，已发布私募基金犯罪典型案例。",
+          "coverage": "非法集资、挪用资金、职务侵占、商业贿赂、操纵市场",
+          "effect": "指导性/典型案例；检察案例",
+          "publisher": "最高人民检察院",
+          "region": "全国",
+          "legal_level": "案例指导参考",
+          "material_nature": "典型案例",
+          "officiality": "官方",
+          "priority": "P1",
+          "content_carrier": "HTML",
+          "update_frequency": "不定期",
+          "scope_strategy": "关键词"
+        }
+      ]
+    },
+    {
+      "endpoint_id": "sse_com_cn_00ed4b5b1a",
+      "url": "https://www.sse.com.cn/lawandrules/",
+      "source_system": "sse_com_cn",
+      "adapter": "http_html",
+      "scope_mode": "query_exhaustive",
+      "query_sets": [
+        "private_fund_core",
+        "cross_border_exit"
+      ],
+      "default_material_lane": "rule",
+      "crawlability": "D 当前受阻",
+      "recommended_access": "从生产网络复测并申请白名单/许可；短期以证监会、交易所公告镜像或人工下载补漏。",
+      "profiles": [
+        {
+          "profile_id": "profile_17a417277f",
+          "workbook_row": 52,
+          "name": "上海证券交易所法律规则",
+          "description": "上交所业务规则和指南；对PE/VC退出、减持和被投企业上市具有直接影响。",
+          "coverage": "创投基金股东减持、锁定期、股份转让、科创板上市退出",
+          "effect": "交易所自律规则/业务指南",
+          "publisher": "上海证券交易所",
+          "region": "全国/上海市场",
+          "legal_level": "自律规则",
+          "material_nature": "交易所规则",
+          "officiality": "官方/自律组织",
+          "priority": "P1",
+          "content_carrier": "动态HTML/PDF",
+          "update_frequency": "不定期",
+          "scope_strategy": "重点主题"
+        }
+      ]
+    },
+    {
+      "endpoint_id": "sz_gov_cn_0b4a3471ca",
+      "url": "https://www.sz.gov.cn/cn/xxgk/zfxxgj/",
+      "source_system": "sz_gov_cn",
+      "adapter": "http_html",
+      "scope_mode": "query_exhaustive",
+      "query_sets": [
+        "private_fund_core",
+        "state_capital",
+        "cross_border_exit"
+      ],
+      "default_material_lane": "rule",
+      "crawlability": "B 条件可抓",
+      "recommended_access": "标准HTTP为主、浏览器回退；长超时、低并发、栏目白名单，定期验证分页接口。",
+      "profiles": [
+        {
+          "profile_id": "profile_5d7e9ecb0b",
+          "workbook_row": 86,
+          "name": "深圳市政府政策文件/公报",
+          "description": "深圳市政府文件和政策解读权威入口。",
+          "coverage": "私募股权、创投、QFLP、政府引导基金和前海政策",
+          "effect": "地方性法规/规章/规范性文件/政策",
+          "publisher": "深圳市人民政府",
+          "region": "深圳",
+          "legal_level": "依具体文件",
+          "material_nature": "市级政策文件",
+          "officiality": "官方",
+          "priority": "P1",
+          "content_carrier": "HTML/PDF",
+          "update_frequency": "不定期",
+          "scope_strategy": "关键词专题"
+        }
+      ]
+    },
+    {
+      "endpoint_id": "szse_cn_87fc916969",
+      "url": "https://www.szse.cn/lawrules/index.html",
+      "source_system": "szse_cn",
+      "adapter": "http_html",
+      "scope_mode": "query_exhaustive",
+      "query_sets": [
+        "private_fund_core",
+        "cross_border_exit"
+      ],
+      "default_material_lane": "rule",
+      "crawlability": "A 直接可抓",
+      "recommended_access": "标准HTTP抓取；1—2并发、2—5秒间隔、条件请求、缓存和失败熔断。",
+      "profiles": [
+        {
+          "profile_id": "profile_f0964d3b42",
+          "workbook_row": 53,
+          "name": "深圳证券交易所法律规则",
+          "description": "深交所业务规则和指南，分类结构清晰。",
+          "coverage": "创投基金减持、创业板锁定期、协议转让、上市退出",
+          "effect": "交易所自律规则/业务指南",
+          "publisher": "深圳证券交易所",
+          "region": "全国/深圳市场",
+          "legal_level": "自律规则",
+          "material_nature": "交易所规则",
+          "officiality": "官方/自律组织",
+          "priority": "P1",
+          "content_carrier": "动态HTML/PDF",
+          "update_frequency": "不定期",
+          "scope_strategy": "重点主题"
+        }
+      ]
+    },
+    {
+      "endpoint_id": "wenshu_court_gov_cn_cacc51b6a9",
+      "url": "https://wenshu.court.gov.cn/",
+      "source_system": "wenshu_court_gov_cn",
+      "adapter": "http_html",
+      "scope_mode": "query_exhaustive",
+      "query_sets": [
+        "private_fund_core"
+      ],
+      "default_material_lane": "reference",
+      "crawlability": "C 不宜无人值守",
+      "recommended_access": "仅做人工/授权专题检索；规则合规主库不依赖该站，优先最高法典型案例及已公开决定。",
+      "profiles": [
+        {
+          "profile_id": "profile_579d773be0",
+          "workbook_row": 51,
+          "name": "中国裁判文书网",
+          "description": "公开裁判文书检索，覆盖大量私募基金民刑事和行政案件。",
+          "coverage": "基金合同、回购/保底、合伙、清算、非法集资、行政争议",
+          "effect": "生效/公开裁判文书；司法案例",
+          "publisher": "最高人民法院",
+          "region": "全国",
+          "legal_level": "司法裁判文书",
+          "material_nature": "裁判文书",
+          "officiality": "官方",
+          "priority": "P2",
+          "content_carrier": "动态检索/验证码",
+          "update_frequency": "持续更新",
+          "scope_strategy": "专题人工检索"
+        }
+      ]
+    },
+    {
+      "endpoint_id": "wzs_mofcom_gov_cn_e7212a9956",
+      "url": "https://wzs.mofcom.gov.cn/zcfb/",
+      "source_system": "wzs_mofcom_gov_cn",
+      "adapter": "http_html",
+      "scope_mode": "query_exhaustive",
+      "query_sets": [
+        "private_fund_core",
+        "cross_border_exit"
+      ],
+      "default_material_lane": "rule",
+      "crawlability": "B 条件可抓",
+      "recommended_access": "从生产部署网络复测；使用栏目白名单和低频HTML抓取，附件单独下载；异常时切换官方公报/规则库补漏。",
+      "profiles": [
+        {
+          "profile_id": "profile_9bba9bf642",
+          "workbook_row": 47,
+          "name": "商务部外资政策发布",
+          "description": "外商投资政策、准入、外资并购等规则入口。",
+          "coverage": "QFLP外资准入、外商投资负面清单、外资并购和安全审查",
+          "effect": "部门规章/规范性文件/政策",
+          "publisher": "商务部",
+          "region": "全国",
+          "legal_level": "依具体文件",
+          "material_nature": "外商投资规则",
+          "officiality": "官方",
+          "priority": "P1",
+          "content_carrier": "HTML/PDF",
+          "update_frequency": "不定期",
+          "scope_strategy": "关键词"
+        }
+      ]
+    },
+    {
+      "endpoint_id": "xzfg_moj_gov_cn_fc243c0496",
+      "url": "https://xzfg.moj.gov.cn/",
+      "source_system": "xzfg_moj_gov_cn",
+      "adapter": "http_html",
+      "scope_mode": "catalog_filter",
+      "query_sets": [
+        "private_fund_core",
+        "cross_border_exit"
+      ],
+      "default_material_lane": "rule",
+      "crawlability": "B 条件可抓",
+      "recommended_access": "低频列表增量+详情/附件；保存最终跳转URL和下载关系，设置长超时与重试上限。",
+      "profiles": [
+        {
+          "profile_id": "profile_48e4301722",
+          "workbook_row": 3,
+          "name": "国家行政法规库",
+          "description": "司法部公布的行政法规国家正式版本，支持现行有效筛选、历史沿革及Word/PDF下载。",
+          "coverage": "私募投资基金监督管理条例、防范和处置非法集资条例、外汇管理条例等",
+          "effect": "行政法规；正式文本及历史沿革",
+          "publisher": "司法部",
+          "region": "全国",
+          "legal_level": "行政法规",
+          "material_nature": "正式规则",
+          "officiality": "官方",
+          "priority": "P0",
+          "content_carrier": "HTML/Word/PDF",
+          "update_frequency": "不定期",
+          "scope_strategy": "目录全量+正文关键词"
+        }
+      ]
+    }
+  ],
+  "wechat": {
+    "wechat_jixiaolv": {
+      "account_name": "基小律",
+      "expected_fakeid": null,
+      "material_lane": "clue",
+      "exporter_commit": "15b391bbf2d18ecd7e48b382e0d723fcfded92c1"
+    }
+  }
+}

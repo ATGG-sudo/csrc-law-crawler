@@ -12,7 +12,15 @@ from .checkpoints import (
     save_checkpoint,
 )
 from .file_store import FileStore
-from .io import append_jsonl, listed_output_files, load_json, publish_json_bundle, save_json
+from .io import (
+    append_jsonl,
+    listed_output_files,
+    load_json,
+    publish_directory_atomic,
+    publish_json_bundle,
+    save_bytes,
+    save_json,
+)
 from .locking import (
     GLOBAL_CLI_OPTIONS,
     LOCK_NAME,
@@ -103,6 +111,7 @@ __all__ = [
     "manifest_path",
     "output_dir",
     "output_path",
+    "publish_directory_atomic",
     "publish_json_bundle",
     "raw_dir",
     "reg_file_path",
@@ -115,6 +124,7 @@ __all__ = [
     "revisions_path",
     "run_with_context",
     "run_with_output_lock",
+    "save_bytes",
     "save_checkpoint",
     "save_json",
     "source_matches_path",

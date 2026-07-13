@@ -28,11 +28,14 @@ packages = [
   "csrc_law_crawler.orchestration",
   "csrc_law_crawler.export",
 ]
+
 py-modules = [
   "amac_crawl",
   "api",
   "audit_canonical_duplicates",
   "asset_text",
+  "baseline_all",
+  "build_digest",
   "build_canonical_relations",
   "build_catalog",
   "catalog_rules",
@@ -48,6 +51,7 @@ py-modules = [
   "export_markdown_laws",
   "failure_taxonomy",
   "http_policy",
+  "import_wechat",
   "markdown_utils",
   "migrate_strict_layout",
   "models",
@@ -66,6 +70,7 @@ py-modules = [
   "revisions_graph",
   "runtime",
   "settings",
+  "source_crawl",
   "storage",
   "validate_catalog",
   "validate_catalog_exports",
@@ -74,6 +79,10 @@ py-modules = [
   "writ_crawl",
   "writ_parser",
 ]
+
+[tool.setuptools.package-data]
+"csrc_law_crawler.sources.amac" = ["*.pem"]
+"csrc_law_crawler.sources" = ["csrc_sources.json"]
 
 [project.scripts]
 csrc-crawler = "csrc_law_crawler.cli.main:main"

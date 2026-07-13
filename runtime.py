@@ -136,9 +136,12 @@ class RunContext:
         key = f"{name}{{{label_suffix}}}" if label_suffix else name
         self.counters[key] = self.counters.get(key, 0) + amount
 
-    def finish(self, *, exit_code: int) -> None:
+    def finish(self, *, exit_code: int, status: str | None = None) -> None:
         duration_seconds = time.monotonic() - self.started_monotonic
-        status = "complete" if exit_code == 0 else "failed"
+        if status is None:
+            status = {0: "complete", 2: "incomplete"}.get(exit_code, "failed")
+        if status not in {"complete", "incomplete", "failed"}:
+            raise ValueError(f"invalid run status: {status}")
         _write_json(
             self.metrics_path,
             {
@@ -152,7 +155,8 @@ class RunContext:
         )
         self.event(
             "run_finished",
-            level="INFO" if exit_code == 0 else "ERROR",
+            level="ERROR" if status == "failed" else "INFO",
+            status=status,
             exit_code=exit_code,
             duration_seconds=round(duration_seconds, 3),
         )

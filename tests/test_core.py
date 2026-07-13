@@ -1801,7 +1801,33 @@ class SafetyTests(unittest.TestCase):
 
         client.get("https://fg.amac.org.cn/example")
 
+        self.assertEqual(str(client.fg_ca_bundle), session.kwargs["verify"])
+
+        client.get("https://www.amac.org.cn/example")
+
         self.assertIs(session.kwargs["verify"], True)
+
+    def test_amac_client_can_explicitly_disable_tls_verification(self) -> None:
+        class Response:
+            def raise_for_status(self) -> None:
+                return None
+
+        class Session:
+            def __init__(self) -> None:
+                self.kwargs: dict[str, object] = {}
+                self.headers: dict[str, str] = {}
+
+            def get(self, *_args, **kwargs):
+                self.kwargs = kwargs
+                return Response()
+
+        client = AmacClient(delay_min=0, delay_max=0, verify_tls=False)
+        session = Session()
+        client.session = session  # type: ignore[assignment]
+
+        client.get("https://fg.amac.org.cn/example")
+
+        self.assertIs(session.kwargs["verify"], False)
 
     def test_amac_client_retries_blocked_get_response(self) -> None:
         class Response:

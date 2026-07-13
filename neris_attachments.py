@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import concurrent.futures
+import hashlib
 import json
 import mimetypes
 import sys
@@ -25,6 +26,7 @@ from storage import (
     reg_file_path,
     relative_to_output,
     run_with_output_lock,
+    save_bytes,
     save_json,
     utc_now_iso,
 )
@@ -95,7 +97,7 @@ def download_attachment(
     law_dir = attachments_root() / law_id
     law_dir.mkdir(parents=True, exist_ok=True)
     path = law_dir / f"{item['attachment_id']}{extension}"
-    path.write_bytes(data)
+    save_bytes(path, data)
     item.update(
         {
             "local_file": relative_to_output(path),
@@ -136,7 +138,17 @@ def update_law_attachments(
         previous = existing_by_id.get(str(item["attachment_id"])) or {}
         item = {**item, **previous, "raw": item.get("raw")}
         local_file = item.get("local_file")
-        local_ok = bool(local_file and output_path(str(local_file)).exists())
+        local_path = output_path(str(local_file)) if local_file else None
+        local_ok = False
+        if local_path is not None and local_path.is_file():
+            local_ok = True
+            if item.get("size_bytes") is not None:
+                local_ok = local_path.stat().st_size == int(item["size_bytes"])
+            if local_ok and item.get("sha256"):
+                local_ok = (
+                    hashlib.sha256(local_path.read_bytes()).hexdigest()
+                    == item["sha256"]
+                )
         if download and (force or not local_ok):
             try:
                 download_attachment(client, law_id, item)

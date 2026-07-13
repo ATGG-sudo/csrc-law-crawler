@@ -7,6 +7,7 @@ import time
 from typing import Any
 
 import requests
+from requests.exceptions import InvalidSchema, InvalidURL, MissingSchema
 
 from config import (
     BASE_URL,
@@ -78,11 +79,30 @@ class HumanLikeClient:
             )
             time.sleep(pause)
 
-    def _is_blocked(self, response: requests.Response) -> bool:
+    def _is_blocked(
+        self,
+        response: requests.Response,
+        *,
+        inspect_body: bool = True,
+    ) -> bool:
+        if response.status_code >= 500:
+            return True
+        if not inspect_body:
+            return False
         text = response.text[:500]
-        return response.status_code >= 500 or any(
-            marker in text for marker in self.policy.blocked_markers
-        )
+        return any(marker in text for marker in self.policy.blocked_markers)
+
+    @staticmethod
+    def _is_retryable_request_error(exc: requests.RequestException) -> bool:
+        if isinstance(
+            exc,
+            (InvalidSchema, InvalidURL, MissingSchema),
+        ):
+            return False
+        if not isinstance(exc, requests.HTTPError):
+            return True
+        status = int(getattr(exc.response, "status_code", 0) or 0)
+        return status >= 500 or status in {408, 429}
 
     def _record_response(
         self,
@@ -104,6 +124,33 @@ class HumanLikeClient:
             url=url,
             status=status,
         )
+
+    def _record_retry(
+        self,
+        *,
+        url: str,
+        attempt: int,
+        wait: float,
+        reason: FailureReason,
+        exc: BaseException | None = None,
+    ) -> None:
+        fields: dict[str, Any] = {}
+        summary = "拦截/超时" if exc is None else f"错误 {exc!r}"
+        if exc is not None:
+            fields["error_type"] = type(exc).__name__
+            fields["error_message"] = str(exc)
+        log_event(
+            "http_retry",
+            level="WARNING",
+            message=f"  [{summary}，{wait:.1f}s 后重试 {attempt}/{MAX_RETRIES}]",
+            url=url,
+            attempt=attempt,
+            max_retries=MAX_RETRIES,
+            wait_seconds=round(wait, 3),
+            reason=reason,
+            **fields,
+        )
+        log_metric("http_retries_total", source=self.source_name, reason=reason)
 
     def get_html(self, path: str, *, referer: str | None = None) -> str:
         """GET 详情页 HTML（执法文书正文在服务端渲染页面中）。"""
@@ -128,25 +175,14 @@ class HumanLikeClient:
 
                 if self._is_blocked(response):
                     wait = RETRY_BACKOFF_BASE * attempt + random.uniform(2, 6)
-                    log_event(
-                        "http_retry",
-                        level="WARNING",
-                        message=(
-                            f"  [拦截/超时，{wait:.1f}s 后重试 "
-                            f"{attempt}/{MAX_RETRIES}]"
-                        ),
-                        url=url,
-                        attempt=attempt,
-                        max_retries=MAX_RETRIES,
-                        wait_seconds=round(wait, 3),
-                        reason=FailureReason.NETWORK_BLOCKED,
-                    )
-                    log_metric(
-                        "http_retries_total",
-                        source=self.source_name,
-                        reason=FailureReason.NETWORK_BLOCKED,
-                    )
-                    time.sleep(wait)
+                    if attempt < MAX_RETRIES:
+                        self._record_retry(
+                            url=url,
+                            attempt=attempt,
+                            wait=wait,
+                            reason=FailureReason.NETWORK_BLOCKED,
+                        )
+                        time.sleep(wait)
                     continue
 
                 response.raise_for_status()
@@ -154,28 +190,21 @@ class HumanLikeClient:
                 return response.text
 
             except requests.RequestException as exc:
+                if not self._is_retryable_request_error(exc):
+                    raise
                 last_error = exc
                 wait = RETRY_BACKOFF_BASE * attempt + random.uniform(1, 4)
-                log_event(
-                    "http_retry",
-                    level="WARNING",
-                    message=f"  [错误 {exc!r}，{wait:.1f}s 后重试 {attempt}/{MAX_RETRIES}]",
-                    url=url,
-                    attempt=attempt,
-                    max_retries=MAX_RETRIES,
-                    wait_seconds=round(wait, 3),
-                    reason=FailureReason.NETWORK_REQUEST_EXCEPTION,
-                    error_type=type(exc).__name__,
-                    error_message=str(exc),
-                )
-                log_metric(
-                    "http_retries_total",
-                    source=self.source_name,
-                    reason=FailureReason.NETWORK_REQUEST_EXCEPTION,
-                )
-                time.sleep(wait)
+                if attempt < MAX_RETRIES:
+                    self._record_retry(
+                        url=url,
+                        attempt=attempt,
+                        wait=wait,
+                        reason=FailureReason.NETWORK_REQUEST_EXCEPTION,
+                        exc=exc,
+                    )
+                    time.sleep(wait)
 
-        raise RuntimeError(f"请求失败: {url}") from last_error
+        raise RuntimeError(f"请求失败: {url}: {last_error}") from last_error
 
     def get_binary(
         self,
@@ -209,27 +238,19 @@ class HumanLikeClient:
                 self._request_count += 1
                 self._record_response("GET", url, response)
 
-                if self._is_blocked(response):
+                if self._is_blocked(response, inspect_body=False):
+                    close = getattr(response, "close", None)
+                    if callable(close):
+                        close()
                     wait = RETRY_BACKOFF_BASE * attempt + random.uniform(2, 6)
-                    log_event(
-                        "http_retry",
-                        level="WARNING",
-                        message=(
-                            f"  [拦截/超时，{wait:.1f}s 后重试 "
-                            f"{attempt}/{MAX_RETRIES}]"
-                        ),
-                        url=url,
-                        attempt=attempt,
-                        max_retries=MAX_RETRIES,
-                        wait_seconds=round(wait, 3),
-                        reason=FailureReason.NETWORK_BLOCKED,
-                    )
-                    log_metric(
-                        "http_retries_total",
-                        source=self.source_name,
-                        reason=FailureReason.NETWORK_BLOCKED,
-                    )
-                    time.sleep(wait)
+                    if attempt < MAX_RETRIES:
+                        self._record_retry(
+                            url=url,
+                            attempt=attempt,
+                            wait=wait,
+                            reason=FailureReason.NETWORK_BLOCKED,
+                        )
+                        time.sleep(wait)
                     continue
 
                 response.raise_for_status()
@@ -242,36 +263,28 @@ class HumanLikeClient:
                 return payload
 
             except (requests.RequestException, RetryableContentError) as exc:
+                if isinstance(exc, requests.RequestException) and not (
+                    self._is_retryable_request_error(exc)
+                ):
+                    raise
                 last_error = exc
                 wait = RETRY_BACKOFF_BASE * attempt + random.uniform(1, 4)
-                log_event(
-                    "http_retry",
-                    level="WARNING",
-                    message=f"  [错误 {exc!r}，{wait:.1f}s 后重试 {attempt}/{MAX_RETRIES}]",
-                    url=url,
-                    attempt=attempt,
-                    max_retries=MAX_RETRIES,
-                    wait_seconds=round(wait, 3),
-                    reason=(
+                if attempt < MAX_RETRIES:
+                    reason = (
                         exc.reason
                         if isinstance(exc, RetryableContentError)
                         else FailureReason.NETWORK_REQUEST_EXCEPTION
-                    ),
-                    error_type=type(exc).__name__,
-                    error_message=str(exc),
-                )
-                log_metric(
-                    "http_retries_total",
-                    source=self.source_name,
-                    reason=(
-                        exc.reason
-                        if isinstance(exc, RetryableContentError)
-                        else FailureReason.NETWORK_REQUEST_EXCEPTION
-                    ),
-                )
-                time.sleep(wait)
+                    )
+                    self._record_retry(
+                        url=url,
+                        attempt=attempt,
+                        wait=wait,
+                        reason=reason,
+                        exc=exc,
+                    )
+                    time.sleep(wait)
 
-        raise RuntimeError(f"请求失败: {url}") from last_error
+        raise RuntimeError(f"请求失败: {url}: {last_error}") from last_error
 
     def post_json(
         self,
@@ -298,25 +311,14 @@ class HumanLikeClient:
 
                 if self._is_blocked(response):
                     wait = RETRY_BACKOFF_BASE * attempt + random.uniform(2, 6)
-                    log_event(
-                        "http_retry",
-                        level="WARNING",
-                        message=(
-                            f"  [拦截/超时，{wait:.1f}s 后重试 "
-                            f"{attempt}/{MAX_RETRIES}]"
-                        ),
-                        url=url,
-                        attempt=attempt,
-                        max_retries=MAX_RETRIES,
-                        wait_seconds=round(wait, 3),
-                        reason=FailureReason.NETWORK_BLOCKED,
-                    )
-                    log_metric(
-                        "http_retries_total",
-                        source=self.source_name,
-                        reason=FailureReason.NETWORK_BLOCKED,
-                    )
-                    time.sleep(wait)
+                    if attempt < MAX_RETRIES:
+                        self._record_retry(
+                            url=url,
+                            attempt=attempt,
+                            wait=wait,
+                            reason=FailureReason.NETWORK_BLOCKED,
+                        )
+                        time.sleep(wait)
                     continue
 
                 response.raise_for_status()
@@ -330,33 +332,25 @@ class HumanLikeClient:
                 return payload
 
             except (requests.RequestException, ValueError) as exc:
+                if isinstance(exc, requests.RequestException) and not (
+                    self._is_retryable_request_error(exc)
+                ):
+                    raise
                 last_error = exc
                 wait = RETRY_BACKOFF_BASE * attempt + random.uniform(1, 4)
-                log_event(
-                    "http_retry",
-                    level="WARNING",
-                    message=f"  [错误 {exc!r}，{wait:.1f}s 后重试 {attempt}/{MAX_RETRIES}]",
-                    url=url,
-                    attempt=attempt,
-                    max_retries=MAX_RETRIES,
-                    wait_seconds=round(wait, 3),
-                    reason=(
+                if attempt < MAX_RETRIES:
+                    reason = (
                         FailureReason.PARSE_SCHEMA_MISMATCH
                         if isinstance(exc, ValueError)
                         else FailureReason.NETWORK_REQUEST_EXCEPTION
-                    ),
-                    error_type=type(exc).__name__,
-                    error_message=str(exc),
-                )
-                log_metric(
-                    "http_retries_total",
-                    source=self.source_name,
-                    reason=(
-                        FailureReason.PARSE_SCHEMA_MISMATCH
-                        if isinstance(exc, ValueError)
-                        else FailureReason.NETWORK_REQUEST_EXCEPTION
-                    ),
-                )
-                time.sleep(wait)
+                    )
+                    self._record_retry(
+                        url=url,
+                        attempt=attempt,
+                        wait=wait,
+                        reason=reason,
+                        exc=exc,
+                    )
+                    time.sleep(wait)
 
-        raise RuntimeError(f"请求失败: {url}") from last_error
+        raise RuntimeError(f"请求失败: {url}: {last_error}") from last_error

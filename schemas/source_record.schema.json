@@ -17,6 +17,21 @@
     "content": {
       "type": "object"
     },
+    "discovery_evidence": {
+      "items": {
+        "type": "object"
+      },
+      "type": "array"
+    },
+    "fingerprints": {
+      "type": "object"
+    },
+    "ingest_status": {
+      "type": "string"
+    },
+    "material_lane": {
+      "type": "string"
+    },
     "metadata": {
       "type": "object"
     },

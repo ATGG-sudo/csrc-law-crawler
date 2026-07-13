@@ -21,6 +21,7 @@ from storage import (
     output_path,
     relative_to_output,
     run_with_output_lock,
+    save_bytes,
     save_json,
     utc_now_iso,
 )
@@ -109,7 +110,7 @@ def _write_asset_file(law_id: str, asset: dict[str, Any], data: bytes, extension
     law_dir.mkdir(parents=True, exist_ok=True)
     filename = f"{asset['asset_id']}{extension}"
     path = law_dir / filename
-    path.write_bytes(data)
+    save_bytes(path, data)
     return relative_to_output(path)
 
 
@@ -118,9 +119,17 @@ def _existing_file(asset: dict[str, Any]) -> Path | None:
     if not local_file:
         return None
     path = output_path(local_file)
-    if path.exists() and path.is_file() and path.stat().st_size > 0:
-        return path
-    return None
+    if not path.exists() or not path.is_file() or path.stat().st_size <= 0:
+        return None
+    expected_size = asset.get("size_bytes")
+    if expected_size is not None and path.stat().st_size != int(expected_size):
+        return None
+    expected_sha256 = asset.get("sha256")
+    if expected_sha256:
+        actual_sha256 = hashlib.sha256(path.read_bytes()).hexdigest()
+        if actual_sha256 != expected_sha256:
+            return None
+    return path
 
 
 def _asset_record(law_id: str, asset: dict[str, Any]) -> dict[str, Any]:

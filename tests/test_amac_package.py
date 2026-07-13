@@ -261,6 +261,22 @@ class AmacPackageBoundaryTests(unittest.TestCase):
 
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
+            old_record_id = "amac_existing"
+            old_record_path = (
+                root / "raw" / "amac" / "records" / f"{old_record_id}.json"
+            )
+            old_record_path.parent.mkdir(parents=True)
+            old_record_path.write_text(
+                json.dumps(
+                    {
+                        "source_record_id": old_record_id,
+                        "metadata": {"name": "已有制度", "status": "current"},
+                        "assets": [],
+                    },
+                    ensure_ascii=False,
+                ),
+                encoding="utf-8",
+            )
             with patch("storage.OUTPUT_DIR", root), patch(
                 "csrc_law_crawler.sources.amac.pipeline.AmacClient",
                 Client,
@@ -274,12 +290,21 @@ class AmacPackageBoundaryTests(unittest.TestCase):
                 )
 
             self.assertEqual(1, manifest["candidate_count"])
-            self.assertEqual(1, manifest["count"])
+            self.assertEqual(2, manifest["count"])
             self.assertEqual(1, manifest["written"])
             manifest_path = root / "raw" / "amac" / "manifest.json"
             self.assertTrue(manifest_path.exists())
             written_manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-            record_path = root / written_manifest["items"][0]["file"]
+            self.assertEqual(
+                {old_record_id, source_record_id(detail_url)},
+                {item["source_record_id"] for item in written_manifest["items"]},
+            )
+            record_item = next(
+                item
+                for item in written_manifest["items"]
+                if item["source_record_id"] == source_record_id(detail_url)
+            )
+            record_path = root / record_item["file"]
             self.assertEqual(root / "raw" / "amac" / "records", record_path.parent)
             record = json.loads(record_path.read_text(encoding="utf-8"))
             self.assertEqual(measure_title, record["metadata"]["name"])

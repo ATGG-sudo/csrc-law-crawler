@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import io
+import logging
 import re
 import shutil
 import subprocess
@@ -17,6 +18,11 @@ from parser import repair_known_neris_mojibake
 
 TEXT_ASSET_SUFFIXES = {".doc", ".docx", ".pdf", ".txt", ".xlsx"}
 PAGE_NUMBER_LINE_RE = re.compile(r"\d{1,4}")
+logging.getLogger("pypdf").setLevel(logging.ERROR)
+
+
+class AssetTextExtractionTimeout(TimeoutError):
+    """Raised when a caller-imposed extraction deadline expires."""
 
 
 def _clean_extracted_text(text: str) -> str:
@@ -139,6 +145,8 @@ def _extract_doc_with_command(path: Path, command: str) -> str:
             check=False,
             timeout=60,
         )
+    except AssetTextExtractionTimeout:
+        raise
     except Exception:
         return ""
     if result.returncode != 0 or not result.stdout:

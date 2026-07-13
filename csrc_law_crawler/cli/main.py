@@ -16,10 +16,22 @@ class Command:
 
 
 COMMANDS: dict[str, Command] = {
+    "baseline-all": Command("baseline_all", "baseline-all", "执行全部信源基线与立即增量核验"),
     "crawl": Command("crawl", "crawl", "抓取 NERIS 法规和执法文书"),
     "enhance": Command("enhance", "enhance", "执行修订、案例、文书增强阶段"),
     "repair": Command("repair", "repair", "执行 P0-P2 多源修复流水线"),
     "amac-crawl": Command("amac_crawl", "amac-crawl", "抓取 AMAC 补充来源"),
+    "run-sources": Command(
+        "source_crawl",
+        "run-sources",
+        "运行工作簿注册的公开信源",
+    ),
+    "import-wechat": Command(
+        "import_wechat",
+        "import-wechat",
+        "导入基小律 JSON + HTML 导出包",
+    ),
+    "build-digest": Command("build_digest", "build-digest", "生成信源基线与变化摘要"),
     "neris-attachments": Command(
         "neris_attachments",
         "neris-attachments",

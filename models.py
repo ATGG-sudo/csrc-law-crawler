@@ -24,7 +24,12 @@ class SourceRecord:
     metadata: JsonObject
     content: JsonObject
     source: JsonObject
+    ingest_status: str = "complete"
+    material_lane: str = "rule"
+    discovery_evidence: list[JsonObject] = field(default_factory=list)
+    fingerprints: JsonObject = field(default_factory=dict)
     assets: list[JsonObject] = field(default_factory=list)
+    attachment_documents: list[JsonObject] = field(default_factory=list)
 
 
 @dataclass(frozen=True)
@@ -125,6 +130,10 @@ SOURCE_RECORD_SCHEMA = _object(
         "source_system": STRING,
         "metadata": OBJECT,
         "content": OBJECT,
+        "ingest_status": STRING,
+        "material_lane": STRING,
+        "discovery_evidence": {"type": "array", "items": OBJECT},
+        "fingerprints": OBJECT,
         "assets": {"type": "array", "items": OBJECT},
         "attachment_documents": {"type": "array", "items": OBJECT},
         "source": OBJECT,

@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 import sys
 from pathlib import Path
 from typing import Any, Callable
@@ -38,7 +39,7 @@ from storage import (
     utc_now_iso,
     writs_dir,
 )
-from writ_crawl import fetch_and_save_writ
+from writ_crawl import fetch_and_save_writ, writ_has_body
 
 StepResultRun = Callable[[], StepResult]
 
@@ -83,9 +84,10 @@ def _write_step_results(results: list[StepResult]) -> None:
 
 
 def _write_crawl_failures(stage: str, failures: list[dict[str, Any]]) -> str | None:
-    if not failures:
-        return None
     path = reports_dir() / f"{stage}_failures.json"
+    if not failures:
+        path.unlink(missing_ok=True)
+        return None
     save_json(
         path,
         {
@@ -97,6 +99,60 @@ def _write_crawl_failures(stage: str, failures: list[dict[str, Any]]) -> str | N
         },
     )
     return relative_to_output(path)
+
+
+def _existing_document(path: Path, law_id: str, law_type: int) -> dict[str, Any] | None:
+    if not path.exists():
+        return None
+    try:
+        document = load_json(path, None)
+    except (OSError, json.JSONDecodeError):
+        return None
+    if not isinstance(document, dict):
+        return None
+    if law_type == LAW_TYPE_WRIT:
+        return document if writ_has_body(document) else None
+    metadata = document.get("metadata")
+    if not isinstance(metadata, dict) or str(metadata.get("id") or "") != law_id:
+        return None
+    return document if isinstance(document.get("full_text"), str) else None
+
+
+def _manifest_item(
+    law_id: str,
+    type_key: str,
+    name: str,
+    summary: dict[str, Any],
+    out_path: Path,
+    document: dict[str, Any],
+) -> dict[str, Any]:
+    source = document.get("source") or {}
+    return {
+        "id": law_id,
+        "type": type_key,
+        "name": name,
+        "fileno": summary.get("fileno"),
+        "file": relative_to_output(out_path),
+        "crawled_at": source.get("crawled_at") or utc_now_iso(),
+    }
+
+
+def _save_manifest(manifest: dict[str, Any], manifest_index: dict[str, Any]) -> None:
+    manifest["items"] = sorted(
+        manifest_index.values(), key=lambda item: item.get("name") or ""
+    )
+    manifest["updated_at"] = utc_now_iso()
+    save_json(manifest_path(), manifest)
+
+
+def _clear_checkpoint_failure(
+    checkpoint: dict[str, Any], law_id: str, type_key: str
+) -> None:
+    checkpoint["failures"] = [
+        failure
+        for failure in checkpoint.get("failures", [])
+        if failure.get("id") != law_id or failure.get("type") != type_key
+    ]
 
 
 def crawl_type(
@@ -131,7 +187,11 @@ def crawl_type(
     )
 
     manifest = load_json(manifest_path(), {"updated_at": None, "items": []})
-    manifest_index = {item["id"]: item for item in manifest.get("items", [])}
+    manifest_index = {
+        str(item["id"]): item
+        for item in manifest.get("items", [])
+        if isinstance(item, dict) and item.get("id")
+    }
 
     seen = 0
     written = 0
@@ -190,14 +250,27 @@ def crawl_type(
             law_id = summary.get("secFutrsLawId") or summary.get("lawWritId")
             if not law_id:
                 continue
-            if law_id in done_ids and law_file_path(law_id, law_type).exists():
+            law_id = str(law_id)
+            out_path = law_file_path(law_id, law_type)
+            name = summary.get("secFutrsLawName") or summary.get("name") or law_id
+            existing_document = _existing_document(out_path, law_id, law_type)
+            if law_id in done_ids and existing_document is not None:
+                if law_id not in manifest_index:
+                    manifest_index[law_id] = _manifest_item(
+                        law_id,
+                        type_key,
+                        str(name),
+                        summary,
+                        out_path,
+                        existing_document,
+                    )
+                    _save_manifest(manifest, manifest_index)
                 skipped += 1
                 continue
 
             seen += 1
             idx = seen
             total_hint = limit if limit is not None else "?"
-            name = summary.get("secFutrsLawName") or summary.get("name") or law_id
             log_event(
                 "crawl_record_started",
                 message=f"[{idx}/{total_hint}] {name}",
@@ -206,27 +279,28 @@ def crawl_type(
                 record_name=name,
             )
 
-            out_path = law_file_path(law_id, law_type)
             try:
                 if law_type == LAW_TYPE_REGULATION:
-                    detail_resp = fetch_law_detail(client, law_id)
-                    document = build_law_document(detail_resp.get("lawlist") or {})
-                    metadata = document.setdefault("metadata", {})
-                    if not metadata.get("pub_org"):
-                        metadata["pub_org"] = summary.get("lawPubOrgName")
-                    document["source"] = {
-                        "list_summary": {
-                            "fileno": summary.get("fileno"),
-                            "pub_org": summary.get("lawPubOrgName"),
-                            "pub_date_ms": summary.get("pubDate"),
-                        },
-                        "crawled_at": utc_now_iso(),
-                        "detail_url": (
-                            f"https://neris.csrc.gov.cn/falvfagui/"
-                            f"rdqsHeader/mainbody?navbarId=1&secFutrsLawId={law_id}"
-                        ),
-                    }
-                    save_json(out_path, document)
+                    document = existing_document
+                    if document is None:
+                        detail_resp = fetch_law_detail(client, law_id)
+                        document = build_law_document(detail_resp.get("lawlist") or {})
+                        metadata = document.setdefault("metadata", {})
+                        if not metadata.get("pub_org"):
+                            metadata["pub_org"] = summary.get("lawPubOrgName")
+                        document["source"] = {
+                            "list_summary": {
+                                "fileno": summary.get("fileno"),
+                                "pub_org": summary.get("lawPubOrgName"),
+                                "pub_date_ms": summary.get("pubDate"),
+                            },
+                            "crawled_at": utc_now_iso(),
+                            "detail_url": (
+                                f"https://neris.csrc.gov.cn/falvfagui/"
+                                f"rdqsHeader/mainbody?navbarId=1&secFutrsLawId={law_id}"
+                            ),
+                        }
+                        save_json(out_path, document)
                     if fetch_attachments:
                         update_law_attachments(
                             client,
@@ -234,29 +308,25 @@ def crawl_type(
                             download=False,
                         )
                 else:
-                    fetch_and_save_writ(client, law_id, list_row=summary)
+                    document = fetch_and_save_writ(client, law_id, list_row=summary)
 
-                manifest_index[law_id] = {
-                    "id": law_id,
-                    "type": type_key,
-                    "name": name,
-                    "fileno": summary.get("fileno"),
-                    "file": relative_to_output(out_path),
-                    "crawled_at": utc_now_iso(),
-                }
+                manifest_index[law_id] = _manifest_item(
+                    law_id,
+                    type_key,
+                    str(name),
+                    summary,
+                    out_path,
+                    document,
+                )
+                _save_manifest(manifest, manifest_index)
 
                 done_ids.add(law_id)
                 checkpoint.setdefault("completed_ids", {}).setdefault(type_key, [])
                 if law_id not in checkpoint["completed_ids"][type_key]:
                     checkpoint["completed_ids"][type_key].append(law_id)
+                _clear_checkpoint_failure(checkpoint, law_id, type_key)
                 checkpoint["updated_at"] = utc_now_iso()
                 save_json(checkpoint_path(), checkpoint)
-
-                manifest["items"] = sorted(
-                    manifest_index.values(), key=lambda x: x.get("name") or ""
-                )
-                manifest["updated_at"] = utc_now_iso()
-                save_json(manifest_path(), manifest)
                 written += 1
 
             except Exception as exc:
@@ -275,6 +345,7 @@ def crawl_type(
                     "at": utc_now_iso(),
                 }
                 run_failures.append(failure)
+                _clear_checkpoint_failure(checkpoint, law_id, type_key)
                 checkpoint.setdefault("failures", []).append(failure)
                 save_json(checkpoint_path(), checkpoint)
 

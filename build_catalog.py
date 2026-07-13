@@ -18,6 +18,7 @@ from csrc_law_crawler.processing.catalog import identity as _catalog_identity
 from csrc_law_crawler.processing.catalog import manifest as _catalog_manifest_helpers
 from csrc_law_crawler.processing.catalog import matching as _catalog_matching
 from csrc_law_crawler.processing.catalog import relations as _catalog_relations
+from csrc_law_crawler.sources.registry import load_registry
 from parser import repair_known_neris_mojibake
 from runtime import log_event
 from storage import (
@@ -68,7 +69,9 @@ _neris_merge_index_key = _catalog_entities._neris_merge_index_key
 _neris_merge_source_metadata = _catalog_entities._neris_merge_source_metadata
 _prefer_longer_record_content = _catalog_entities._prefer_longer_record_content
 _record_assets = _catalog_entities._record_assets
-_repair_multi_document_announcement_content = _catalog_entities._repair_multi_document_announcement_content
+_repair_multi_document_announcement_content = (
+    _catalog_entities._repair_multi_document_announcement_content
+)
 _seed_neris_entities = _catalog_entities._seed_neris_entities
 _source_descriptor = _catalog_entities._source_descriptor
 _source_file_sha256 = _catalog_entities._source_file_sha256
@@ -120,6 +123,7 @@ _add_neris_title_relations = _catalog_relations._add_neris_title_relations
 _add_trial_replacement_relations = _catalog_relations._add_trial_replacement_relations
 _build_catalog_relations = _catalog_relations._build_catalog_relations
 
+
 def catalog_manifest_path() -> Path:
     return catalog_dir() / "manifest.json"
 
@@ -155,14 +159,6 @@ def _record_plain_text(
         return text
     fallback = _asset_text_fallback(metadata, local_file)
     return fallback if fallback else text
-
-
-
-
-
-
-
-
 
 
 def _neris_records() -> list[dict[str, Any]]:
@@ -249,66 +245,85 @@ def _amac_records() -> list[dict[str, Any]]:
     return records
 
 
+def _multi_source_rule_records() -> list[dict[str, Any]]:
+    """Load only publishable rule records from the multi-source evidence store."""
+    root = output_path("raw/sources/records")
+    records: list[dict[str, Any]] = []
+    if not root.exists():
+        return records
+    restricted_endpoints = {
+        endpoint["endpoint_id"]
+        for endpoint in load_registry()["endpoints"]
+        if endpoint["scope_mode"] in {"catalog_filter", "query_exhaustive"}
+    }
+    for path in sorted(root.glob("*/*.json")):
+        doc = load_json(path, {})
+        if doc.get("ingest_status") != "complete" or doc.get("material_lane") != "rule":
+            continue
+        content = doc.get("content") or {}
+        plain_text = repair_known_neris_mojibake(str(content.get("plain_text") or ""))
+        if not plain_text.strip():
+            continue
+        source = doc.get("source") or {}
+        if (
+            source.get("endpoint_id") in restricted_endpoints
+            and source.get("scope_status") != "matched"
+        ):
+            continue
+        records.append(
+            {
+                "system": str(doc.get("source_system") or path.parent.name),
+                "record_id": str(doc.get("source_record_id") or path.stem),
+                "metadata": _repair_text_fields(doc.get("metadata") or {}),
+                "plain_text": plain_text,
+                "local_file": relative_to_output(path),
+                "page_url": source.get("page_url"),
+                "assets": doc.get("assets") or [],
+            }
+        )
+    return records
 
 
+def _merge_multi_source_rules(
+    records: list[dict[str, Any]],
+    entities: dict[str, dict[str, Any]],
+    source_to_entity: dict[tuple[str, str], str],
+) -> None:
+    """Merge exact official duplicates; otherwise keep a source-owned entity."""
+    for record in records:
+        metadata = record.get("metadata") or {}
+        title_key = normalize_title(metadata.get("name"))
+        fileno_key = normalize_fileno(metadata.get("fileno"))
+        candidates: list[tuple[str, dict[str, Any]]] = []
+        for entity_id, entity in entities.items():
+            entity_metadata = entity.get("metadata") or {}
+            if normalize_title(entity_metadata.get("name") or entity.get("title")) != title_key:
+                continue
+            entity_fileno = normalize_fileno(entity_metadata.get("fileno"))
+            if fileno_key and entity_fileno and fileno_key != entity_fileno:
+                continue
+            left_date = metadata.get("pub_date")
+            right_date = entity_metadata.get("pub_date")
+            if left_date and right_date and not _dates_match_for_merge(left_date, right_date):
+                continue
+            candidates.append((entity_id, entity))
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
+        if title_key and len(candidates) == 1:
+            entity_id, entity = candidates[0]
+            _append_record_source(entity, record, role="official_duplicate")
+            _append_record_assets(entity, record)
+            _prefer_longer_record_content(entity, record)
+        else:
+            entity_id = canonical_id(f"{record['system']}:{record['record_id']}")
+            entities[entity_id] = _entity_from_record(record, entity_id)
+        source_to_entity[(record["system"], record["record_id"])] = entity_id
 
 
 def build_catalog(*, clean: bool = True) -> dict[str, Any]:
     source_records = CatalogSourceLoader(_neris_records, _amac_records).load()
     neris_records = source_records.neris
     amac_records = source_records.amac
+    multi_source_rule_records = _multi_source_rule_records()
     if clean and catalog_laws_dir().exists():
         shutil.rmtree(catalog_laws_dir())
     catalog_laws_dir().mkdir(parents=True, exist_ok=True)
@@ -317,6 +332,7 @@ def build_catalog(*, clean: bool = True) -> dict[str, Any]:
     entities, source_to_entity, title_index = _seed_neris_entities(neris_records)
     matcher = CatalogMatcher(title_index, choose_neris_match_with_rule)
     matches = _match_amac_records(amac_records, matcher, entities, source_to_entity)
+    _merge_multi_source_rules(multi_source_rule_records, entities, source_to_entity)
     dedupe_result = deduplicate_catalog_entities(entities, source_to_entity, matches)
     relations = _build_catalog_relations(
         neris_records=neris_records,
@@ -337,6 +353,7 @@ def build_catalog(*, clean: bool = True) -> dict[str, Any]:
         review_items=review_items,
         matches=matches,
     )
+    manifest["multi_source_rule_records"] = len(multi_source_rule_records)
 
     writer.write_entities(catalog_laws_dir(), entities)
     writer.write_source_matches(source_matches_path(), source_to_entity, matches)
