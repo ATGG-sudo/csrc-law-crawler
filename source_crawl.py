@@ -8,6 +8,7 @@ import json
 import sys
 
 from csrc_law_crawler.sources.runner import COMPLETE, SourceRunner
+from config import WORKERS
 from runtime import log_event
 from storage import run_with_output_lock
 
@@ -21,6 +22,9 @@ def main() -> int:
     mode.add_argument("--baseline", action="store_true", help="建立基线，不报告历史为新增")
     mode.add_argument("--incremental", action="store_true", help="与已保存基线比较变化")
     parser.add_argument("--resume", metavar="RUN_ID", help="恢复同一指纹下的运行")
+    parser.add_argument("--refresh-subjects", action="store_true")
+    parser.add_argument("--retry-failed", action="store_true")
+    parser.add_argument("--retry-incomplete", action="store_true")
     args = parser.parse_args()
 
     runner = SourceRunner()
@@ -29,6 +33,10 @@ def main() -> int:
             mode="baseline" if args.baseline else "incremental",
             endpoint_ids=None if args.all else args.endpoint,
             resume_run_id=args.resume,
+            workers=WORKERS,
+            refresh_subjects=args.refresh_subjects,
+            retry_failed=args.retry_failed,
+            retry_incomplete=args.retry_incomplete,
         )
     except Exception as exc:
         log_event(

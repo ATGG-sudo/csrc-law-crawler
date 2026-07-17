@@ -10,6 +10,8 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import urlsplit
 
+from csrc_law_crawler.sources.registry import validate_registry
+
 
 QUERY_SETS = {
     "private_fund_core": [
@@ -193,7 +195,7 @@ def build_registry(inspection: dict[str, Any]) -> dict[str, Any]:
             }
         )
 
-    result = {
+    result: dict[str, Any] = {
         "schema_version": 1,
         "source_workbook": inspection.get("source"),
         "source_verified_at": "2026-07-13",
@@ -209,11 +211,7 @@ def build_registry(inspection: dict[str, Any]) -> dict[str, Any]:
             }
         },
     }
-    if len(result["endpoints"]) != 85:
-        raise ValueError(f"expected 85 endpoints, got {len(result['endpoints'])}")
-    profile_count = sum(len(item["profiles"]) for item in result["endpoints"])
-    if profile_count != 86:
-        raise ValueError(f"expected 86 profiles, got {profile_count}")
+    validate_registry(result)
     return result
 
 

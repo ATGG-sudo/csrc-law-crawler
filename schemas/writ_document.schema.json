@@ -5,6 +5,18 @@
     "body": {
       "type": "string"
     },
+    "enforcement_classification": {
+      "additionalProperties": true,
+      "properties": {
+        "category": {
+          "enum": ["penalties", "self_regulatory_measure", "abnormal_operation", "missing_institution", "other_enforcement"]
+        },
+        "subtype": {
+          "enum": ["disciplinary_decision", "disciplinary_prior_notice", "disciplinary_review_decision", "other"]
+        }
+      },
+      "type": ["object", "null"]
+    },
     "legal_basis": {
       "items": {
         "type": "object"

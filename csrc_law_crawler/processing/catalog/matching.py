@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections import defaultdict
+import re
 from typing import Any
 
 from catalog_rules import (
@@ -13,17 +14,39 @@ from catalog_rules import (
     MATCH_UNIQUE_TITLE,
     OFFICIAL_RULE_TYPES,
     RELATION_OFFICIAL_SUCCESSOR,
+    RELATION_DRAFT_FINALIZED,
+    RELATION_EXPLICIT_SUCCESSOR,
+    RELATION_SAME_INSTRUMENT_COPY,
     TRIAL_REPLACEMENT,
 )
+from .classification import material_classification_for
 
 from .identity import (
     _date_distance,
     _date_sort_value,
+    instrument_title_keys,
+    is_draft_title,
     is_trial_title,
     normalize_fileno,
     normalize_title,
     normalize_title_without_trial,
+    QUOTED_TITLE_RE,
 )
+
+EXPLICIT_RENAME_RE = re.compile(r"将《([^》]{4,120})》修订为《([^》]{4,120})》")
+REVISION_TITLE_SUFFIX_RE = re.compile(r"[（(]\s*(?:\d{4}年(?:\d{1,2}月)?)?修订\s*[）)]$")
+EXPLICIT_REVISION_ACTION_RE = re.compile(
+    r"(?:进行(?:了)?|作(?:了|出(?:了)?)|予以|已经|已)\s*修订|"
+    r"(?<!年)修订(?:了|为)"
+)
+EXPLICIT_REPEAL_ACTION_RE = re.compile(
+    r"(?:同时|同步|一并|予以|即行|决定)\s*废止|"
+    r"按法定程序\s*废止|"
+    r"自[^。\n，；;]{0,40}?起\s*废止"
+)
+SENTENCE_SPLIT_RE = re.compile(r"[。！？!?]+")
+REPEAL_CLAUSE_BOUNDARIES = "，；;"
+TITLE_ALIAS_RE = re.compile(r"《([^》]{4,120})》[^。《》]{0,80}?以下简称(?:原)?《([^》]{4,60})》")
 
 KNOWN_SUCCESSOR_CHAINS: tuple[dict[str, Any], ...] = (
     {
@@ -127,17 +150,21 @@ KNOWN_SUCCESSOR_CHAINS: tuple[dict[str, Any], ...] = (
     },
 )
 
+
 def _normalized_org(entity: dict[str, Any]) -> str:
     metadata = entity.get("metadata") or {}
     return normalize_title(metadata.get("pub_org"))
+
 
 def _pub_date_value(entity: dict[str, Any]) -> int | None:
     metadata = entity.get("metadata") or {}
     return _date_sort_value(metadata.get("pub_date"))
 
+
 def _is_official_rule_entity(entity: dict[str, Any]) -> bool:
     document_type = str(entity.get("document_type") or "")
     return document_type in OFFICIAL_RULE_TYPES
+
 
 def infer_trial_replacement_relations(
     entities: dict[str, dict[str, Any]],
@@ -198,11 +225,289 @@ def infer_trial_replacement_relations(
         )
     return relations
 
+
+def infer_draft_finalization_relations(
+    entities: dict[str, dict[str, Any]],
+) -> list[dict[str, Any]]:
+    by_key: dict[str, list[tuple[str, dict[str, Any]]]] = defaultdict(list)
+    for entity_id, entity in entities.items():
+        for key in instrument_title_keys(entity.get("title")):
+            by_key[key].append((entity_id, entity))
+    relations: list[dict[str, Any]] = []
+    seen: set[tuple[str, str]] = set()
+    for draft_id, draft in entities.items():
+        if not is_draft_title(draft.get("title")):
+            continue
+        draft_date = _pub_date_value(draft)
+        draft_org = _normalized_org(draft)
+        for key in instrument_title_keys(draft.get("title")):
+            candidates = []
+            for formal_id, formal in by_key.get(key) or []:
+                if formal_id == draft_id or is_draft_title(formal.get("title")):
+                    continue
+                if not _is_official_rule_entity(formal):
+                    continue
+                formal_org = _normalized_org(formal)
+                if draft_org and formal_org and draft_org != formal_org:
+                    continue
+                formal_date = _pub_date_value(formal)
+                if draft_date is not None and formal_date is not None and formal_date < draft_date:
+                    continue
+                candidates.append((formal_date or 0, formal_id, formal))
+            if len(candidates) != 1:
+                continue
+            _, formal_id, formal = candidates[0]
+            if (formal_id, draft_id) in seen:
+                continue
+            seen.add((formal_id, draft_id))
+            relations.append(
+                {
+                    "from": formal_id,
+                    "to": draft_id,
+                    "relation": "finalizes_draft",
+                    "source": "catalog.exact_instrument_draft",
+                    "rule_id": RELATION_DRAFT_FINALIZED.rule_id,
+                    "confidence": RELATION_DRAFT_FINALIZED.confidence,
+                    "evidence": {
+                        "rule_id": RELATION_DRAFT_FINALIZED.rule_id,
+                        "instrument_title": key,
+                        "draft_title": draft.get("title"),
+                        "formal_title": formal.get("title"),
+                        "draft_pub_date": (draft.get("metadata") or {}).get("pub_date"),
+                        "formal_pub_date": (formal.get("metadata") or {}).get("pub_date"),
+                    },
+                }
+            )
+    return relations
+
+
+def infer_same_instrument_relations(
+    entities: dict[str, dict[str, Any]],
+) -> list[dict[str, Any]]:
+    by_fileno: dict[str, list[tuple[str, dict[str, Any]]]] = defaultdict(list)
+    for entity_id, entity in entities.items():
+        if any(
+            source.get("page_role") == "publication_wrapper"
+            for source in entity.get("sources") or []
+        ):
+            continue
+        fileno = normalize_fileno((entity.get("metadata") or {}).get("fileno"))
+        if fileno:
+            by_fileno[fileno].append((entity_id, entity))
+    relations: list[dict[str, Any]] = []
+    for fileno, group in by_fileno.items():
+        for left_index, (left_id, left) in enumerate(group):
+            left_keys = instrument_title_keys(left.get("title"))
+            for right_id, right in group[left_index + 1 :]:
+                shared = sorted(left_keys & instrument_title_keys(right.get("title")))
+                if not shared:
+                    continue
+                left_neris = any(
+                    source.get("system") == "neris" for source in left.get("sources") or []
+                )
+                right_neris = any(
+                    source.get("system") == "neris" for source in right.get("sources") or []
+                )
+                if left_neris != right_neris:
+                    from_id, to_id = (left_id, right_id) if left_neris else (right_id, left_id)
+                else:
+                    from_id, to_id = sorted((left_id, right_id))
+                relations.append(
+                    {
+                        "from": from_id,
+                        "to": to_id,
+                        "relation": "same_instrument_copy",
+                        "source": "catalog.title_fileno",
+                        "rule_id": RELATION_SAME_INSTRUMENT_COPY.rule_id,
+                        "confidence": RELATION_SAME_INSTRUMENT_COPY.confidence,
+                        "evidence": {
+                            "rule_id": RELATION_SAME_INSTRUMENT_COPY.rule_id,
+                            "instrument_title": shared[0],
+                            "fileno": fileno,
+                        },
+                    }
+                )
+    return relations
+
+
+def infer_explicit_successor_relations(
+    entities: dict[str, dict[str, Any]],
+) -> list[dict[str, Any]]:
+    by_title: dict[str, list[str]] = defaultdict(list)
+    by_revision_title: dict[str, list[str]] = defaultdict(list)
+    for entity_id, entity in entities.items():
+        for key in instrument_title_keys(entity.get("title")):
+            by_title[key].append(entity_id)
+        title = str(entity.get("title") or "")
+        base_title = REVISION_TITLE_SUFFIX_RE.sub("", title).strip()
+        if base_title:
+            by_revision_title[normalize_title(base_title)].append(entity_id)
+    relations: list[dict[str, Any]] = []
+    seen: set[tuple[str, str]] = set()
+    for entity_id, entity in entities.items():
+        material = material_classification_for(entity)
+        is_publication_wrapper = any(
+            source.get("page_role") == "publication_wrapper"
+            for source in entity.get("sources") or []
+        )
+        formal_reference_copy = material.get("category") == "other_reference" and str(
+            entity.get("title") or ""
+        ).endswith(("法", "条例"))
+        if material.get("lane") != "rule" and not (is_publication_wrapper or formal_reference_copy):
+            continue
+        body = str((entity.get("preferred_content") or {}).get("plain_text") or "")
+        aliases: dict[str, set[str]] = defaultdict(set)
+        for full_title, alias in TITLE_ALIAS_RE.findall(body):
+            aliases[normalize_title(alias)].add(full_title)
+        clauses: list[tuple[str, str, str, str | None]] = []
+        title = str(entity.get("title") or "")
+        base_title = REVISION_TITLE_SUFFIX_RE.sub("", title).strip()
+        if base_title != title:
+            base_key = normalize_title(base_title)
+            revision_clause = ""
+            for title_match in QUOTED_TITLE_RE.finditer(body):
+                if normalize_title(title_match.group(1)) != base_key:
+                    continue
+                tail = body[title_match.end() : title_match.end() + 80]
+                action = EXPLICIT_REVISION_ACTION_RE.search(tail)
+                if action:
+                    revision_clause = body[title_match.start() : title_match.end() + action.end()]
+                    break
+            source_date = _pub_date_value(entity)
+            source_org = _normalized_org(entity)
+            if revision_clause and source_date is not None and source_org:
+                candidates: list[tuple[int, str]] = []
+                for candidate_id in by_revision_title.get(base_key) or []:
+                    if candidate_id == entity_id:
+                        continue
+                    candidate = entities[candidate_id]
+                    candidate_date = _pub_date_value(candidate)
+                    if candidate_date is None or candidate_date >= source_date:
+                        continue
+                    if _normalized_org(candidate) != source_org:
+                        continue
+                    candidates.append((candidate_date, candidate_id))
+                if candidates:
+                    latest_date = max(candidate[0] for candidate in candidates)
+                    latest_ids = [
+                        candidate_id
+                        for candidate_date, candidate_id in candidates
+                        if candidate_date == latest_date
+                    ]
+                    if len(latest_ids) == 1:
+                        clauses.append(
+                            (
+                                base_title,
+                                revision_clause,
+                                "exact_title_revision",
+                                latest_ids[0],
+                            )
+                        )
+        for match in EXPLICIT_RENAME_RE.finditer(body):
+            old_title, new_title = match.groups()
+            if normalize_title(new_title) in instrument_title_keys(entity.get("title")):
+                clauses.append((old_title, match.group(0), "explicit_rename", None))
+        for sentence in SENTENCE_SPLIT_RE.split(body):
+            for action in EXPLICIT_REPEAL_ACTION_RE.finditer(sentence):
+                prefix = sentence[: action.start()]
+                clause_start = max(
+                    (prefix.rfind(marker) for marker in REPEAL_CLAUSE_BOUNDARIES),
+                    default=-1,
+                )
+                clause = sentence[clause_start + 1 : action.end()]
+                prior_list_start = prefix.rfind("此前发布的")
+                if prior_list_start >= 0:
+                    prior_list = sentence[
+                        prior_list_start + len("此前发布的") : action.end()
+                    ].lstrip()
+                    if prior_list.startswith("《"):
+                        clause = prior_list
+                clauses.extend(
+                    (old_title, clause, "explicit_repeal", None)
+                    for old_title in QUOTED_TITLE_RE.findall(clause)
+                )
+        compact_body = re.sub(r"\s+", "", body)
+        supporting_repeal = "配套内容与格式指引同时废止"
+        disclosure_prefix = normalize_title("私募投资基金信息披露内容与格式指引")
+        if supporting_repeal in compact_body:
+            for candidate_id, candidate in entities.items():
+                candidate_title = str(candidate.get("title") or "")
+                if candidate_id != entity_id and normalize_title(candidate_title).startswith(
+                    disclosure_prefix
+                ):
+                    clauses.append(
+                        (
+                            candidate_title,
+                            supporting_repeal,
+                            "explicit_supporting_instruments_repeal",
+                            candidate_id,
+                        )
+                    )
+        for old_title, clause, inference, direct_target_id in clauses:
+            targets = (
+                [direct_target_id]
+                if direct_target_id
+                else by_title.get(normalize_title(old_title)) or []
+            )
+            resolved_title = old_title
+            if not targets:
+                full_titles = aliases.get(normalize_title(old_title)) or set()
+                if len(full_titles) == 1:
+                    resolved_title = next(iter(full_titles))
+                    targets = by_title.get(normalize_title(resolved_title)) or []
+            if len(targets) > 1:
+                exact_targets = [
+                    target_id
+                    for target_id in targets
+                    if normalize_title(entities[target_id].get("title"))
+                    == normalize_title(resolved_title)
+                ]
+                if len(exact_targets) == 1:
+                    targets = exact_targets
+            if len(targets) != 1 or targets[0] == entity_id:
+                continue
+            target_id = targets[0]
+            source_date = _pub_date_value(entity)
+            target_date = _pub_date_value(entities[target_id])
+            if source_date is not None and target_date is not None and source_date < target_date:
+                continue
+            if (entity_id, target_id) in seen:
+                continue
+            seen.add((entity_id, target_id))
+            relations.append(
+                {
+                    "from": entity_id,
+                    "to": target_id,
+                    "relation": "supersedes",
+                    "source": "catalog.explicit_successor_clause",
+                    "rule_id": RELATION_EXPLICIT_SUCCESSOR.rule_id,
+                    "confidence": RELATION_EXPLICIT_SUCCESSOR.confidence,
+                    "evidence": {
+                        "rule_id": RELATION_EXPLICIT_SUCCESSOR.rule_id,
+                        "old_title": resolved_title,
+                        "old_title_mention": old_title,
+                        "new_title": entity.get("title"),
+                        "inference": inference,
+                        "clause": clause,
+                        "source_pub_date": (entity.get("metadata") or {}).get("pub_date"),
+                        "effective_date": (entity.get("metadata") or {}).get(
+                            "effective_date"
+                        ),
+                        "target_pub_date": (entities[target_id].get("metadata") or {}).get(
+                            "pub_date"
+                        ),
+                    },
+                }
+            )
+    return relations
+
+
 def _known_successor_key(item: dict[str, Any]) -> tuple[str, str]:
     return (
         normalize_title(item.get("title") or item.get("name")),
         normalize_fileno(item.get("fileno")),
     )
+
 
 def infer_known_successor_relations(
     entities: dict[str, dict[str, Any]],
@@ -246,6 +551,7 @@ def infer_known_successor_relations(
             )
     return relations
 
+
 def choose_neris_match(
     amac: dict[str, Any],
     title_index: dict[str, list[dict[str, Any]]],
@@ -255,6 +561,7 @@ def choose_neris_match(
         title_index,
     )
     return match, status, confidence, evidence
+
 
 def choose_neris_match_with_rule(
     amac: dict[str, Any],
@@ -315,3 +622,5 @@ def choose_neris_match_with_rule(
         return match, status, rule.confidence, ["题名唯一一致；日期或文号证据不足"], rule.rule_id
     rule = MATCH_AMBIGUOUS_TITLE
     return None, "ambiguous", rule.confidence, ["NERIS存在多个同题名候选"], rule.rule_id
+    (instrument_title_keys,)
+    (is_draft_title,)

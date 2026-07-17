@@ -12,6 +12,7 @@ from bs4 import BeautifulSoup
 
 from asset_text import extract_asset_text_bytes
 from config import AMAC_VERIFY_TLS
+from parser import infer_effective_date, infer_pub_date
 from runtime import log_event
 from storage import (
     amac_sources_dir,
@@ -364,6 +365,8 @@ def crawl_candidate(
         root = content_root(soup)
         plain_text = clean_text(root.get_text("\n", strip=True))
         metadata = metadata_from_page(soup, candidate)
+        metadata["pub_date"] = infer_pub_date(metadata, url)
+        metadata["effective_date"] = infer_effective_date(metadata, plain_text)
         for asset_url, label in asset_links(root, url):
             if asset_suffixes is not None and not _asset_matches_suffixes(
                 asset_url,

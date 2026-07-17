@@ -211,7 +211,8 @@ python export_markdown_laws.py --force --clean
 
 - RAG / 全文检索：`canonical/json/* -> full_text_plain`
 - 保留表格的检索：`canonical/json/* -> full_text_markdown`
-- 人工阅读：`canonical/markdown/{current,unknown,historical,reference}/`
+- 兼容阅读路径：`canonical/markdown/{current,pending,historical,reference,unknown}/`
+- 分类管理视图：`canonical/library/`（现行、待生效、失效、参考、待核验）
 - 唯一正式关系图：`canonical/relations/graph.json`
 - 关系图人工巡检：`reports/relation_viewer/index.html`
 - 原始数据追溯：`raw/neris/laws/`、`raw/amac/records/`
@@ -252,14 +253,30 @@ python repair.py --phase p2
 OUTPUT_DIR/canonical/
 ├── json/                  # 唯一 normalized JSON
 ├── markdown/
-│   ├── current/           # 现行有效，含 AMAC 正式制度缺省有效
+│   ├── current/           # 有明确证据且无日期冲突的现行制度
+│   ├── pending/           # 已颁布未施行或施行日在分类基准日之后
 │   ├── unknown/           # 证据不足，待核验
 │   ├── historical/        # 失效、废止、被修改、已被替代
 │   └── reference/         # 征求意见稿、动态、说明、模板、辅助材料
+├── library/               # 人用双轴分类视图及 index.csv/manifest.json
+├── classification_review_queue.json
+├── classification_review_queue.csv
 ├── relations/graph.json   # 唯一正式关系图
 ├── indexes/source_map.json
 └── manifest.json
 ```
+
+材料性质与制度效力相互独立。`material_classification.lane` 为
+`rule/reference/unknown`，制度效力为
+`current/pending/historical/unknown/not_applicable`。正文中出现“征求意见稿”
+不会改变材料性质；只有标题、来源栏目或明确元数据会触发征求意见分类。
+默认分类日期使用中国时区当天，可用
+`python normalize_catalog.py --as-of YYYY-MM-DD --force --clean` 重现。
+
+少量人工核验结果写入
+`csrc_law_crawler/processing/catalog/classification_overrides.json`。每项必须包含
+canonical ID、材料性质、材料类别、效力、核验日期、官方证据链接和备注；该文件
+不修改 raw 数据，所有视图均可重建。
 
 ### AMAC 专项抓取
 
@@ -305,7 +322,7 @@ python -m csrc_law_crawler.cli.main amac-crawl \
 | 抓取 AMAC 自律管理 PDF | `python -m csrc_law_crawler.cli.main amac-crawl --output-root /mnt/d/amac --only-self-regulatory-management --download-pdf-assets` |
 | 抓取 AMAC 行业研究 PDF | `python -m csrc_law_crawler.cli.main amac-crawl --output-root /mnt/d/amac --only-industry-research --download-pdf-assets` |
 | 生成统一目录 | `python build_catalog.py` |
-| 清洗统一目录 | `python normalize_catalog.py --force --clean` |
+| 清洗统一目录 | `python normalize_catalog.py --as-of YYYY-MM-DD --force --clean` |
 | 导出统一目录 Markdown | `python export_markdown_catalog.py --force --clean` |
 | 导出关系图查看器 | `python relation_viewer.py` |
 
@@ -425,7 +442,9 @@ OUTPUT_DIR/
 │       └── amac/
 ├── canonical/
 │   ├── json/
-│   ├── markdown/{current,unknown,historical,reference}/
+│   ├── markdown/{current,pending,historical,reference,unknown}/
+│   ├── library/
+│   ├── classification_review_queue.{json,csv}
 │   ├── relations/graph.json
 │   ├── indexes/source_map.json
 │   └── manifest.json
@@ -489,20 +508,21 @@ OUTPUT_DIR/
 
 ## 当前数据快照
 
-最近校验日期：2026-06-24。该表是一次本地全量运行结果，不代表源站数据永久不变。
+最近校验日期：2026-07-14。该表是一次本地全量运行结果，不代表源站数据永久不变；
+校验器按 ID 覆盖和语义不变量验收，不把这些数量作为固定门槛。
 
 | 数据 | 数量 |
 | --- | ---: |
-| NERIS 法规 | 3422 |
-| NERIS 官网执法文书列表 | 3249 |
+| NERIS 法规 | 3424 |
+| NERIS 执法文书 | 4041 |
 | 已抓取案例引用文书 | 781 |
-| NERIS 独立附件记录 | 1313 |
-| AMAC 页面及附件来源记录 | 664 |
-| 统一法规实体 | 3852 |
-| 统一目录 Markdown | 3852 |
-| Markdown：current / unknown / historical / reference | 3427 / 140 / 49 / 236 |
-| 正式关系图节点 / 边 | 5749 / 4994 |
-| `supersedes` / `related_to` / `cited_by_case` / `publishes` | 1086 / 777 / 2989 / 142 |
+| NERIS 独立附件索引 | 3424 |
+| AMAC 页面来源记录 | 2919 |
+| 统一法规实体 | 7008 |
+| 兼容 Markdown / library 业务文件 | 7008 / 7008 |
+| current / pending / historical / reference / unknown | 3314 / 4 / 78 / 3095 / 517 |
+| 正式关系图节点 / 边 | 8905 / 5375 |
+| `supersedes` / `related_to` / `cited_by_case` / `publishes` | 1099 / 774 / 2989 / 513 |
 
 默认 Pass 4 只抓取 `work/relations/cases.json` 引用的文书，因此本地文书数通常少于官网文书总数。
 
@@ -526,7 +546,7 @@ OUTPUT_DIR/
 | [export_markdown_catalog.py](export_markdown_catalog.py) | 统一目录 Markdown 导出 |
 | [build_canonical_relations.py](build_canonical_relations.py) | 合并唯一正式关系图 |
 | [relation_viewer.py](relation_viewer.py) | 导出关系图本地静态查看器 |
-| [migrate_strict_layout.py](migrate_strict_layout.py) | 严格目录迁移和旧派生清理 |
+| [migrate_strict_layout.py](migrate_strict_layout.py) | 严格目录迁移、根目录只读审计和显式隔离 |
 | [coverage_gaps.py](coverage_gaps.py) | 正文、附件和系列覆盖缺口检测 |
 
 ## 已知限制

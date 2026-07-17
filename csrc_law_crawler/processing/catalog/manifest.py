@@ -24,12 +24,17 @@ def _match_counts(matches: dict[str, dict[str, Any]]) -> dict[str, int]:
 def _catalog_manifest_items(entities: dict[str, dict[str, Any]]) -> list[dict[str, Any]]:
     items = []
     for entity_id, entity in sorted(entities.items()):
+        material = entity.get("material_classification") or {}
         items.append(
             {
                 "id": entity_id,
                 "title": entity.get("title"),
                 "document_type": entity.get("document_type"),
                 "status": entity.get("status"),
+                "material_lane": material.get("lane"),
+                "material_category": material.get("category"),
+                "material_basis": material.get("basis"),
+                "material_confidence": material.get("confidence"),
                 "sources": len(entity.get("sources") or []),
                 "file": relative_to_output(catalog_laws_dir() / f"{entity_id}.json"),
             }

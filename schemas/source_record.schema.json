@@ -23,6 +23,18 @@
       },
       "type": "array"
     },
+    "enforcement_classification": {
+      "additionalProperties": true,
+      "properties": {
+        "category": {
+          "enum": ["penalties", "self_regulatory_measure", "abnormal_operation", "missing_institution", "other_enforcement"]
+        },
+        "subtype": {
+          "enum": ["disciplinary_decision", "disciplinary_prior_notice", "disciplinary_review_decision", "other"]
+        }
+      },
+      "type": ["object", "null"]
+    },
     "fingerprints": {
       "type": "object"
     },
@@ -31,6 +43,9 @@
     },
     "material_lane": {
       "type": "string"
+    },
+    "page_role": {
+      "enum": ["normative_instrument", "case_document", "publication_wrapper", "supporting_material", "unknown"]
     },
     "metadata": {
       "type": "object"
@@ -46,6 +61,16 @@
     },
     "source_system": {
       "type": "string"
+    },
+    "web_category_leaf": {
+      "type": ["string", "null"]
+    },
+    "web_category_path": {
+      "items": {"type": "string"},
+      "type": "array"
+    },
+    "web_category_provenance": {
+      "enum": ["page_breadcrumb", "api_channel", "endpoint_profile", "url_inference", null]
     }
   },
   "required": [

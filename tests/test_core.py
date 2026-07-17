@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import base64
+from datetime import date
 import io
 import importlib.util
 import json
@@ -24,10 +25,13 @@ from asset_text import extract_asset_text_bytes
 from build_catalog import (
     _build_catalog_relations,
     _catalog_manifest_items,
+    _merge_multi_source_rules,
+    _merge_record_metadata,
     deduplicate_catalog_entities,
     _record_plain_text,
     _review_queue_items,
     _seed_neris_entities,
+    _find_existing_amac_entity,
     choose_neris_match,
     infer_trial_replacement_relations,
     is_trial_title,
@@ -62,6 +66,7 @@ from normalize_catalog import (
 from normalize_laws import _compose_full_text
 from pass2_relations import _apply_revision_response, _merge_related_items, run_pass2
 from parser import build_law_document
+from parser import infer_pub_date, ms_to_date
 from pipeline import (
     STEP_COMPLETE,
     STEP_INCOMPLETE,
@@ -522,6 +527,157 @@ class CatalogMatchingTests(unittest.TestCase):
         self.assertEqual(kept_id, source_to_entity[("amac", "a2")])
         self.assertEqual("same_asset_equivalent_title", result["merged_entities"][0]["reason"])
 
+    def test_catalog_dedupe_merges_same_official_url_and_fills_metadata(self) -> None:
+        entities: dict[str, dict[str, Any]] = {
+            "law_keep": {
+                "id": "law_keep",
+                "title": "私募投资基金登记备案办法",
+                "status": "unknown",
+                "metadata": {
+                    "name": "私募投资基金登记备案办法",
+                    "pub_date": "2023年1",
+                    "effective_date": None,
+                    "status": "unknown",
+                },
+                "preferred_content": {"plain_text": "正文"},
+                "sources": [
+                    {
+                        "system": "neris",
+                        "record_id": "n1",
+                        "page_url": "https://example.test/rule?id=1&utm_source=a",
+                    }
+                ],
+            },
+            "law_remove": {
+                "id": "law_remove",
+                "title": "私募投资基金登记备案办法",
+                "status": "现行有效",
+                "metadata": {
+                    "name": "私募投资基金登记备案办法",
+                    "pub_date": "2023-02-24",
+                    "effective_date": "2023-05-01",
+                    "status": "现行有效",
+                },
+                "preferred_content": {"plain_text": "更完整的正文"},
+                "sources": [
+                    {
+                        "system": "amac",
+                        "record_id": "a1",
+                        "page_url": "https://example.test/rule?id=1",
+                    }
+                ],
+            },
+        }
+        source_to_entity = {("neris", "n1"): "law_keep", ("amac", "a1"): "law_remove"}
+
+        result = deduplicate_catalog_entities(entities, source_to_entity, {})
+
+        self.assertEqual(["law_keep"], list(entities))
+        self.assertEqual(
+            "same_official_url_equivalent_title",
+            result["merged_entities"][0]["reason"],
+        )
+        self.assertEqual("2023-02-24", entities["law_keep"]["metadata"]["pub_date"])
+        self.assertEqual("2023-05-01", entities["law_keep"]["metadata"]["effective_date"])
+        self.assertEqual("现行有效", entities["law_keep"]["status"])
+
+    def test_multi_source_publication_wrapper_merges_by_instrument_and_order(self) -> None:
+        entities = {
+            "law_order_233": {
+                "id": "law_order_233",
+                "title": "私募投资基金信息披露监督管理办法",
+                "metadata": {
+                    "name": "私募投资基金信息披露监督管理办法",
+                    "fileno": "第233号",
+                    "pub_date": "2026-02-24",
+                },
+                "preferred_content": {"plain_text": "第一条 正文。"},
+                "sources": [{"system": "neris", "record_id": "n233"}],
+                "assets": [],
+            },
+            "law_wrapper": {
+                "id": "law_wrapper",
+                "title": "中国证监会发布《私募投资基金信息披露监督管理办法》",
+                "metadata": {
+                    "name": "中国证监会发布《私募投资基金信息披露监督管理办法》",
+                    "pub_date": "2026-02-27",
+                },
+                "preferred_content": {"plain_text": "新闻发布正文"},
+                "sources": [{"system": "amac", "record_id": "wrapper"}],
+                "assets": [],
+            },
+        }
+        source_to_entity = {
+            ("neris", "n233"): "law_order_233",
+            ("amac", "wrapper"): "law_wrapper",
+        }
+        record = {
+            "system": "csrc_gov_cn",
+            "record_id": "c233",
+            "metadata": {
+                "name": "中国证监会发布《私募投资基金信息披露监督管理办法》",
+                "fileno": "中国证券监督管理委员会令第233号",
+                "pub_date": "2026-02-24 15:22:54",
+                "effective_date": "2026-09-01",
+            },
+            "plain_text": "发布正文",
+            "page_url": "https://www.csrc.gov.cn/example/233.html",
+            "assets": [{"asset_id": "pdf233", "sha256": "sha233"}],
+        }
+
+        _merge_multi_source_rules([record], entities, source_to_entity)
+
+        self.assertEqual(["law_order_233", "law_wrapper"], list(entities))
+        self.assertEqual("law_order_233", source_to_entity[("csrc_gov_cn", "c233")])
+        self.assertEqual("2026-09-01", entities["law_order_233"]["metadata"]["effective_date"])
+        self.assertEqual(["pdf233"], [asset["asset_id"] for asset in entities["law_order_233"]["assets"]])
+
+    def test_revision_year_merges_late_index_copy_and_keeps_original_date(self) -> None:
+        title = "私募投资基金备案指引第3号——私募投资基金变更管理人（2025年修订）"
+        indexed = {
+            "metadata": {
+                "name": title,
+                "pub_org": "中国证券投资基金业协会",
+                "pub_date": "2026-06-16",
+                "effective_date": "2026-06-16",
+            }
+        }
+        announcement_asset = {
+            "metadata": {
+                "name": title,
+                "pub_org": "中国证券投资基金业协会",
+                "pub_date": "2025-10-24",
+                "effective_date": "2025-10-24",
+            }
+        }
+
+        matched = _find_existing_amac_entity(
+            announcement_asset,
+            {normalize_title(title): [("law_revision", indexed)]},
+        )
+        entity = {
+            "id": "law_revision",
+            "title": title,
+            "metadata": dict(indexed["metadata"]),
+        }
+        _merge_record_metadata(entity, announcement_asset)
+
+        self.assertEqual("law_revision", matched)
+        self.assertEqual("2025-10-24", entity["metadata"]["pub_date"])
+        self.assertEqual("2025-10-24", entity["metadata"]["effective_date"])
+
+    def test_neris_millisecond_date_uses_china_calendar_day(self) -> None:
+        self.assertEqual("2026-02-24", ms_to_date(1771862400000))
+
+    def test_infer_pub_date_repairs_partial_date_from_official_url(self) -> None:
+        self.assertEqual(
+            "2026-05-29",
+            infer_pub_date(
+                {"pub_date": "2026年3"},
+                "https://www.amac.org.cn/xwfb/tzgg/202605/t20260529_27751.html",
+            ),
+        )
+
     def test_catalog_dedupe_sees_seeded_record_assets(self) -> None:
         neris_records: list[dict[str, Any]] = [
             {
@@ -548,6 +704,45 @@ class CatalogMatchingTests(unittest.TestCase):
         self.assertEqual(kept_id, source_to_entity[("neris", "n1")])
         self.assertEqual(kept_id, source_to_entity[("neris", "n2")])
         self.assertEqual("same_asset_equivalent_title", result["merged_entities"][0]["reason"])
+
+    def test_catalog_dedupe_merges_revision_copy_by_fileno_and_date(self) -> None:
+        entities: dict[str, dict[str, Any]] = {
+            "law_neris": {
+                "id": "law_neris",
+                "title": "证券期货经营机构私募资产管理业务管理办法（2023年修订）",
+                "metadata": {
+                    "name": "证券期货经营机构私募资产管理业务管理办法（2023年修订）",
+                    "fileno": "证监会令第203号",
+                    "pub_date": "2023-01-12",
+                },
+                "preferred_content": {"plain_text": "NERIS正文"},
+                "sources": [{"system": "neris", "record_id": "n203"}],
+            },
+            "law_copy": {
+                "id": "law_copy",
+                "title": "证券期货经营机构私募资产管理业务管理办法",
+                "metadata": {
+                    "name": "证券期货经营机构私募资产管理业务管理办法",
+                    "fileno": "中国证券监督管理委员会令 第203号",
+                    "pub_date": "2023-01-12",
+                },
+                "preferred_content": {"plain_text": "另一官网正文"},
+                "sources": [{"system": "amac", "record_id": "a203"}],
+            },
+        }
+        source_to_entity = {
+            ("neris", "n203"): "law_neris",
+            ("amac", "a203"): "law_copy",
+        }
+
+        result = deduplicate_catalog_entities(entities, source_to_entity, {})
+
+        self.assertEqual(["law_neris"], list(entities))
+        self.assertEqual("law_neris", source_to_entity[("amac", "a203")])
+        self.assertEqual(
+            "same_fileno_date_equivalent_title",
+            result["merged_entities"][0]["reason"],
+        )
 
     def test_catalog_dedupe_repairs_multi_document_announcement_without_merging(
         self,
@@ -1060,7 +1255,7 @@ class CatalogNormalizationTests(unittest.TestCase):
         self.assertIn("## 第二条\n\n符合条件的律师事务所，可自愿申请加入协会。", markdown)
         self.assertNotIn("**第", markdown)
 
-    def test_amac_unknown_official_rule_defaults_to_current(self) -> None:
+    def test_amac_unknown_official_rule_requires_effectiveness_review(self) -> None:
         effectiveness = effectiveness_for(
             {
                 "title": "私募投资基金备案指引第1号",
@@ -1073,10 +1268,10 @@ class CatalogNormalizationTests(unittest.TestCase):
                 "metadata": {"name": "私募投资基金备案指引第1号"},
             }
         )
-        self.assertEqual("current", effectiveness["status"])
-        self.assertEqual("amac_official_rule_default", effectiveness["basis"])
+        self.assertEqual("unknown", effectiveness["status"])
+        self.assertEqual("unverified_official_rule", effectiveness["basis"])
         self.assertEqual(
-            "effectiveness.amac_official_rule_default",
+            "effectiveness.unverified_official_rule",
             effectiveness["rule_id"],
         )
 
@@ -1137,12 +1332,21 @@ class CatalogNormalizationTests(unittest.TestCase):
                         "plain_text": "第二十八条 本办法自公布之日起实施。",
                     },
                     "sources": [],
+                    "assets": [
+                        {
+                            "asset_id": "official_pdf",
+                            "source_url": "https://example.test/rule.pdf",
+                            "sha256": "pdf-sha",
+                            "download_status": "complete",
+                        }
+                    ],
                 },
             )
             with patch("storage.OUTPUT_DIR", root):
                 doc = normalize_catalog_entity(path)
 
         self.assertEqual("2022-12-16", doc["metadata"]["effective_date"])
+        self.assertEqual(["official_pdf"], [asset["asset_id"] for asset in doc["assets"]])
 
     def test_comment_draft_is_reference_even_when_amac_rule_like(self) -> None:
         effectiveness = effectiveness_for(
@@ -1158,8 +1362,8 @@ class CatalogNormalizationTests(unittest.TestCase):
             }
         )
         self.assertEqual("not_applicable", effectiveness["status"])
-        self.assertEqual("comment_draft_signal", effectiveness["basis"])
-        self.assertEqual("effectiveness.comment_draft_signal", effectiveness["rule_id"])
+        self.assertEqual("reference_material", effectiveness["basis"])
+        self.assertEqual("effectiveness.reference_material", effectiveness["rule_id"])
         self.assertEqual("reference", bucket_for_document({"effectiveness": effectiveness}))
 
     def test_reference_template_is_not_amac_default_current(self) -> None:
@@ -1173,8 +1377,8 @@ class CatalogNormalizationTests(unittest.TestCase):
             }
         )
         self.assertEqual("not_applicable", effectiveness["status"])
-        self.assertEqual("reference_title_signal", effectiveness["basis"])
-        self.assertEqual("effectiveness.reference_title_signal", effectiveness["rule_id"])
+        self.assertEqual("reference_material", effectiveness["basis"])
+        self.assertEqual("effectiveness.reference_material", effectiveness["rule_id"])
 
     def test_trial_title_replacement_marks_trial_historical(self) -> None:
         superseding = {
@@ -1321,6 +1525,20 @@ class CatalogNormalizationTests(unittest.TestCase):
         )
         self.assertEqual(1, len(assets))
         self.assertEqual([], assets[0]["source_records"])
+
+    def test_raw_asset_merge_assigns_stable_asset_id(self) -> None:
+        raw_asset = {
+            "attachment_id": "official-attachment",
+            "source_url": "https://example.test/rule.pdf",
+            "download_status": "complete",
+        }
+
+        first = _merge_assets([raw_asset], [])
+        second = _merge_assets([raw_asset], [])
+
+        self.assertEqual(1, len(first))
+        self.assertTrue(first[0]["asset_id"].startswith("catalog_asset_"))
+        self.assertEqual(first[0]["asset_id"], second[0]["asset_id"])
 
 
 class AmacDiscoveryTests(unittest.TestCase):
@@ -1769,6 +1987,15 @@ class SafetyTests(unittest.TestCase):
 
         patterns = [call.kwargs["pattern"] for call in listed.call_args_list]
         self.assertEqual(["law_*.json", "law_*.json", "*/*.md"], patterns)
+
+    def test_validate_catalog_exports_ignores_partial_dates(self) -> None:
+        import validate_catalog_exports
+
+        self.assertIsNone(validate_catalog_exports._iso_date("2026年3"))
+        self.assertEqual(
+            date(2026, 3, 1),
+            validate_catalog_exports._iso_date("2026-03-01"),
+        )
 
     def test_validate_normalized_uses_manifest_file_index(self) -> None:
         import validate_normalized

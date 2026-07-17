@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections import defaultdict
+from datetime import date
 import hashlib
 import re
 from typing import Any
@@ -10,6 +11,7 @@ from typing import Any
 from asset_text import extract_local_asset_text
 from catalog_rules import MATCH_AMAC_INTERNAL_TITLE_DATE
 from catalog_services import CatalogMatcher
+from csrc_law_crawler.sources.evidence import canonical_final_url
 from parser import repair_known_neris_mojibake
 from storage import output_path, utc_now_iso
 
@@ -25,9 +27,11 @@ from .identity import (
     _date_distance,
     canonical_id,
     clean_title,
+    fileno_keys,
     normalize_fileno,
     normalize_title,
 )
+
 
 def _source_descriptor(
     system: str,
@@ -36,23 +40,39 @@ def _source_descriptor(
     role: str,
     local_file: str | None,
     page_url: str | None,
+    material_lane: str | None = None,
+    web_classification: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    return {
+    result = {
         "system": system,
         "record_id": record_id,
         "role": role,
         "local_file": local_file,
         "page_url": page_url,
     }
+    if material_lane:
+        result["material_lane"] = material_lane
+    for key in (
+        "web_category_leaf",
+        "web_category_path",
+        "web_category_provenance",
+        "page_role",
+    ):
+        value = (web_classification or {}).get(key)
+        result[key] = value
+    return result
+
 
 def _record_assets(record: dict[str, Any]) -> list[dict[str, Any]]:
     return [dict(asset) for asset in record.get("assets") or []]
+
 
 def _asset_text_fallback(metadata: dict[str, Any], local_file: Any) -> str:
     local_file_text = str(local_file or "")
     if not local_file_text:
         return ""
     return extract_local_asset_text(output_path(local_file_text))
+
 
 def _low_signal_plain_text(metadata: dict[str, Any], text: str) -> bool:
     compact = SPACE_PUNCT_RE.sub("", text)
@@ -68,6 +88,7 @@ def _low_signal_plain_text(metadata: dict[str, Any], text: str) -> bool:
         return True
     return bool(title and title in compact and len(remainder) <= 8)
 
+
 def _record_plain_text(
     metadata: dict[str, Any],
     plain_text: Any,
@@ -79,12 +100,13 @@ def _record_plain_text(
     fallback = _asset_text_fallback(metadata, local_file)
     return fallback if fallback else text
 
+
 def _entity_from_record(record: dict[str, Any], entity_id: str) -> dict[str, Any]:
     metadata = dict(record.get("metadata") or {})
     title = clean_title(metadata.get("name"))
     metadata["name"] = title
     text = repair_known_neris_mojibake(str(record.get("plain_text") or ""))
-    return {
+    entity = {
         "schema_version": 1,
         "id": entity_id,
         "title": title,
@@ -103,11 +125,17 @@ def _entity_from_record(record: dict[str, Any], entity_id: str) -> dict[str, Any
                 role="official_text",
                 local_file=record.get("local_file"),
                 page_url=record.get("page_url"),
+                material_lane=record.get("material_lane"),
+                web_classification=record,
             )
         ],
         "assets": _record_assets(record),
         "updated_at": utc_now_iso(),
     }
+    if record.get("material_lane"):
+        entity["material_lane"] = record["material_lane"]
+    return entity
+
 
 def _seed_neris_entities(
     neris_records: list[dict[str, Any]],
@@ -130,6 +158,7 @@ def _seed_neris_entities(
             _append_record_source(entity, record, role="official_duplicate")
             _append_record_assets(entity, record)
             _prefer_longer_record_content(entity, record)
+            _merge_record_metadata(entity, record)
             _append_neris_merge_metadata(entity, record)
         else:
             entity_id = canonical_id(f"neris:{record['record_id']}")
@@ -142,6 +171,7 @@ def _seed_neris_entities(
         source_to_entity[("neris", record["record_id"])] = entity_id
     return entities, source_to_entity, title_index
 
+
 def _neris_merge_index_key(record: dict[str, Any]) -> str | None:
     metadata = record.get("metadata") or {}
     title_key = normalize_title(metadata.get("name"))
@@ -150,6 +180,7 @@ def _neris_merge_index_key(record: dict[str, Any]) -> str | None:
         return None
     return f"{title_key}\0{fileno_key}"
 
+
 def _dates_match_for_merge(left: Any, right: Any) -> bool:
     distance = _date_distance(left, right)
     if distance is not None:
@@ -157,6 +188,7 @@ def _dates_match_for_merge(left: Any, right: Any) -> bool:
     left_text = str(left or "").strip()
     right_text = str(right or "").strip()
     return bool(left_text) and left_text == right_text
+
 
 def _find_existing_neris_entity(
     record: dict[str, Any],
@@ -175,6 +207,7 @@ def _find_existing_neris_entity(
             return entity_id
     return None
 
+
 def _neris_merge_source_metadata(record: dict[str, Any]) -> dict[str, Any]:
     metadata = record.get("metadata") or {}
     return {
@@ -185,6 +218,7 @@ def _neris_merge_source_metadata(record: dict[str, Any]) -> dict[str, Any]:
         "pub_date": metadata.get("pub_date"),
         "version": metadata.get("version"),
     }
+
 
 def _append_neris_merge_metadata(
     entity: dict[str, Any],
@@ -207,6 +241,7 @@ def _append_neris_merge_metadata(
     if source_metadata not in merged_sources:
         merged_sources.append(source_metadata)
 
+
 def _append_record_source(
     entity: dict[str, Any],
     record: dict[str, Any],
@@ -220,11 +255,70 @@ def _append_record_source(
             role=role,
             local_file=record.get("local_file"),
             page_url=record.get("page_url"),
+            material_lane=record.get("material_lane"),
+            web_classification=record,
         )
     )
 
+
 def _append_record_assets(entity: dict[str, Any], record: dict[str, Any]) -> None:
     _append_unique_assets(entity, {"assets": _record_assets(record)})
+
+
+def _valid_date(value: Any) -> bool:
+    try:
+        date.fromisoformat(str(value or "").strip()[:10])
+    except ValueError:
+        return False
+    return True
+
+
+def _merge_record_metadata(
+    entity: dict[str, Any],
+    incoming: dict[str, Any],
+) -> None:
+    """Fill missing canonical metadata without replacing stronger evidence."""
+    target = entity.setdefault("metadata", {})
+    source = incoming.get("metadata") or {}
+    title = str(target.get("name") or entity.get("title") or "")
+    revision_year_match = re.search(r"[（(](\d{4})年修订[）)]", title)
+    revision_year = revision_year_match.group(1) if revision_year_match else None
+    for field in ("pub_date", "effective_date", "ineffective_date"):
+        if not _valid_date(target.get(field)) and _valid_date(source.get(field)):
+            target[field] = source[field]
+        elif (
+            field in {"pub_date", "effective_date"}
+            and revision_year
+            and str(source.get(field) or "").startswith(revision_year)
+            and not str(target.get(field) or "").startswith(revision_year)
+        ):
+            target[field] = source[field]
+    for field in (
+        "fileno",
+        "pub_org",
+        "publisher",
+        "document_type",
+        "version",
+    ):
+        if target.get(field) in (None, "", "unknown") and source.get(field) not in (
+            None,
+            "",
+            "unknown",
+        ):
+            target[field] = source[field]
+    source_status = source.get("status")
+    if target.get("status") in (None, "", "unknown") and source_status not in (
+        None,
+        "",
+        "unknown",
+    ):
+        target["status"] = source_status
+        entity["status"] = source_status
+    if entity.get("document_type") in (None, "", "unknown") and target.get(
+        "document_type"
+    ):
+        entity["document_type"] = target["document_type"]
+
 
 def _prefer_longer_record_content(
     entity: dict[str, Any],
@@ -239,14 +333,17 @@ def _prefer_longer_record_content(
             "plain_text": new_text,
         }
 
+
 def _compact_body_text(text: Any) -> str:
     return re.sub(r"\s+", "", str(text or ""))
+
 
 def _body_hash(entity: dict[str, Any]) -> str:
     text = _compact_body_text((entity.get("preferred_content") or {}).get("plain_text"))
     if len(text) < DEDUP_MIN_BODY_CHARS:
         return ""
     return hashlib.sha256(text.encode("utf-8")).hexdigest()
+
 
 def _dedupe_title_key(value: Any) -> str:
     text = clean_title(value)
@@ -255,9 +352,11 @@ def _dedupe_title_key(value: Any) -> str:
     text = REVISION_MARKER_RE.sub("", text)
     return normalize_title(text)
 
+
 def _entity_dedupe_title_key(entity: dict[str, Any]) -> str:
     metadata = entity.get("metadata") or {}
     return _dedupe_title_key(metadata.get("name") or entity.get("title"))
+
 
 def _source_file_sha256(local_file: Any) -> str:
     local_file_text = str(local_file or "")
@@ -272,6 +371,7 @@ def _source_file_sha256(local_file: Any) -> str:
             digest.update(chunk)
     return digest.hexdigest()
 
+
 def _entity_asset_shas(entity: dict[str, Any]) -> set[str]:
     result = {
         str(asset.get("sha256") or "")
@@ -284,6 +384,7 @@ def _entity_asset_shas(entity: dict[str, Any]) -> set[str]:
             result.add(digest)
     return result
 
+
 def _entity_sources_key(source: dict[str, Any]) -> tuple[Any, ...]:
     return (
         source.get("system"),
@@ -293,6 +394,7 @@ def _entity_sources_key(source: dict[str, Any]) -> tuple[Any, ...]:
         source.get("page_url"),
     )
 
+
 def _append_unique_sources(target: dict[str, Any], incoming: dict[str, Any]) -> None:
     sources = target.setdefault("sources", [])
     seen = {_entity_sources_key(source) for source in sources}
@@ -301,6 +403,7 @@ def _append_unique_sources(target: dict[str, Any], incoming: dict[str, Any]) -> 
         if key not in seen:
             sources.append(source)
             seen.add(key)
+
 
 def _append_unique_assets(target: dict[str, Any], incoming: dict[str, Any]) -> None:
     assets = target.setdefault("assets", [])
@@ -322,6 +425,7 @@ def _append_unique_assets(target: dict[str, Any], incoming: dict[str, Any]) -> N
             assets.append(asset)
             seen.add(key)
 
+
 def _entity_completeness(entity: dict[str, Any]) -> int:
     metadata = entity.get("metadata") or {}
     score = 0
@@ -333,8 +437,10 @@ def _entity_completeness(entity: dict[str, Any]) -> int:
         score += 1
     return score
 
+
 def _has_neris_source(entity: dict[str, Any]) -> bool:
     return any(source.get("system") == "neris" for source in entity.get("sources") or [])
+
 
 def _choose_kept_entity_id(
     entity_ids: list[str],
@@ -350,6 +456,7 @@ def _choose_kept_entity_id(
         ),
     )[0]
 
+
 def _source_records_for_entity(
     source_to_entity: dict[tuple[str, str], str],
     entity_id: str,
@@ -359,6 +466,7 @@ def _source_records_for_entity(
         for (system, record_id), mapped_id in sorted(source_to_entity.items())
         if mapped_id == entity_id
     ]
+
 
 def _merge_catalog_entity(
     *,
@@ -373,6 +481,7 @@ def _merge_catalog_entity(
     removed = entities[removed_id]
     _append_unique_sources(kept, removed)
     _append_unique_assets(kept, removed)
+    _merge_record_metadata(kept, removed)
     kept_text = str((kept.get("preferred_content") or {}).get("plain_text") or "")
     removed_text = str((removed.get("preferred_content") or {}).get("plain_text") or "")
     if len(removed_text) > len(kept_text):
@@ -405,6 +514,7 @@ def _merge_catalog_entity(
         "reason": reason,
         "source_records": source_records,
     }
+
 
 def _merge_equivalent_groups(
     entities: dict[str, dict[str, Any]],
@@ -441,6 +551,7 @@ def _merge_equivalent_groups(
                     )
     return merged
 
+
 def _body_duplicate_groups(entities: dict[str, dict[str, Any]]) -> dict[str, list[str]]:
     groups: dict[str, list[str]] = defaultdict(list)
     for entity_id, entity in entities.items():
@@ -449,12 +560,44 @@ def _body_duplicate_groups(entities: dict[str, dict[str, Any]]) -> dict[str, lis
             groups[digest].append(entity_id)
     return {digest: ids for digest, ids in groups.items() if len(ids) > 1}
 
+
 def _asset_duplicate_groups(entities: dict[str, dict[str, Any]]) -> dict[str, list[str]]:
     groups: dict[str, list[str]] = defaultdict(list)
     for entity_id, entity in entities.items():
         for sha256 in _entity_asset_shas(entity):
             groups[sha256].append(entity_id)
     return {sha256: ids for sha256, ids in groups.items() if len(ids) > 1}
+
+
+def _source_url_duplicate_groups(
+    entities: dict[str, dict[str, Any]],
+) -> dict[str, list[str]]:
+    groups: dict[str, list[str]] = defaultdict(list)
+    for entity_id, entity in entities.items():
+        urls = {
+            canonical_final_url(str(source.get("page_url") or ""))
+            for source in entity.get("sources") or []
+            if source.get("page_url")
+        }
+        for url in urls:
+            if url:
+                groups[url].append(entity_id)
+    return {url: ids for url, ids in groups.items() if len(ids) > 1}
+
+
+def _fileno_date_duplicate_groups(
+    entities: dict[str, dict[str, Any]],
+) -> dict[str, list[str]]:
+    groups: dict[str, list[str]] = defaultdict(list)
+    for entity_id, entity in entities.items():
+        metadata = entity.get("metadata") or {}
+        pub_date = str(metadata.get("pub_date") or "")[:10]
+        if not _valid_date(pub_date):
+            continue
+        for fileno in fileno_keys(metadata.get("fileno")):
+            groups[f"{fileno}:{pub_date}"].append(entity_id)
+    return {key: ids for key, ids in groups.items() if len(ids) > 1}
+
 
 def _announcement_mentions_multiple_titles(text: str, entities: list[dict[str, Any]]) -> bool:
     normalized_text = normalize_title(text)
@@ -465,6 +608,7 @@ def _announcement_mentions_multiple_titles(text: str, entities: list[dict[str, A
         if title_base and normalize_title(title_base) in normalized_text:
             mentioned += 1
     return mentioned >= 2
+
 
 def _is_multi_document_announcement_body(
     text: str,
@@ -477,6 +621,7 @@ def _is_multi_document_announcement_body(
     if len(QUOTED_TITLE_RE.findall(text)) < 2:
         return False
     return _announcement_mentions_multiple_titles(text, entities)
+
 
 def _repair_multi_document_announcement_content(
     entities: dict[str, dict[str, Any]],
@@ -512,12 +657,31 @@ def _repair_multi_document_announcement_content(
             )
     return repaired
 
+
 def deduplicate_catalog_entities(
     entities: dict[str, dict[str, Any]],
     source_to_entity: dict[tuple[str, str], str],
     matches: dict[str, dict[str, Any]],
 ) -> dict[str, Any]:
     merged_entities: list[dict[str, Any]] = []
+    merged_entities.extend(
+        _merge_equivalent_groups(
+            entities,
+            source_to_entity,
+            matches,
+            _fileno_date_duplicate_groups(entities),
+            "same_fileno_date_equivalent_title",
+        )
+    )
+    merged_entities.extend(
+        _merge_equivalent_groups(
+            entities,
+            source_to_entity,
+            matches,
+            _source_url_duplicate_groups(entities),
+            "same_official_url_equivalent_title",
+        )
+    )
     merged_entities.extend(
         _merge_equivalent_groups(
             entities,
@@ -546,6 +710,7 @@ def deduplicate_catalog_entities(
         "content_repairs": content_repairs,
     }
 
+
 def _find_existing_amac_entity(
     record: dict[str, Any],
     amac_entity_index: dict[str, list[tuple[str, dict[str, Any]]]],
@@ -561,7 +726,16 @@ def _find_existing_amac_entity(
     )
     if distance is None or distance <= 3:
         return candidate_entity_id
+    metadata = record.get("metadata") or {}
+    candidate_metadata = candidate_record.get("metadata") or {}
+    title = str(metadata.get("name") or "")
+    if REVISION_MARKER_RE.search(title):
+        left_org = normalize_title(metadata.get("pub_org"))
+        right_org = normalize_title(candidate_metadata.get("pub_org"))
+        if not left_org or not right_org or left_org == right_org:
+            return candidate_entity_id
     return None
+
 
 def _merge_amac_record(
     record: dict[str, Any],
@@ -584,6 +758,7 @@ def _merge_amac_record(
         )
         _append_record_assets(entity, record)
         _prefer_longer_record_content(entity, record)
+        _merge_record_metadata(entity, record)
     else:
         title_key = normalize_title((record.get("metadata") or {}).get("name"))
         existing_amac_entity = _find_existing_amac_entity(record, amac_entity_index)
@@ -593,6 +768,7 @@ def _merge_amac_record(
             _append_record_source(entity, record, role="official_copy")
             _append_record_assets(entity, record)
             _prefer_longer_record_content(entity, record)
+            _merge_record_metadata(entity, record)
             status = "same_document"
             confidence = MATCH_AMAC_INTERNAL_TITLE_DATE.confidence
             evidence = ["AMAC多个官方页面或附件题名、发布日期一致"]
@@ -612,6 +788,7 @@ def _merge_amac_record(
         "confidence": confidence,
         "evidence": evidence,
     }
+
 
 def _match_amac_records(
     amac_records: list[dict[str, Any]],

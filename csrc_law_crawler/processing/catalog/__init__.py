@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from importlib import import_module
+
 from .rules import (
     ALL_CATALOG_RULES,
     CONFIDENCE_BANDS,
@@ -12,11 +14,6 @@ from .rules import (
     catalog_rules_manifest,
     classify_amac_document,
     confidence_band,
-)
-from .normalization import (
-    effectiveness_for,
-    normalize_catalog_entity,
-    plain_text_to_markdown,
 )
 from .identity import (
     canonical_id,
@@ -79,3 +76,17 @@ __all__ = [
     "review_queue_items",
     "seed_neris_entities",
 ]
+
+
+_LAZY_NORMALIZATION_EXPORTS = {
+    "effectiveness_for",
+    "normalize_catalog_entity",
+    "plain_text_to_markdown",
+}
+
+
+def __getattr__(name: str):  # type: ignore[no-untyped-def]
+    if name in _LAZY_NORMALIZATION_EXPORTS:
+        module = import_module(".normalization", __name__)
+        return getattr(module, name)
+    raise AttributeError(name)

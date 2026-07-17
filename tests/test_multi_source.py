@@ -6,12 +6,14 @@ import json
 import os
 from pathlib import Path
 import tempfile
+import threading
+import time
 import unittest
 from unittest.mock import patch
 
 from build_catalog import _multi_source_rule_records
 from csrc_law_crawler.core.io import publish_directory_atomic
-from csrc_law_crawler.sources.adapters import HttpHtmlAdapter
+from csrc_law_crawler.sources.adapters import DATE_RE, HttpHtmlAdapter
 from csrc_law_crawler.sources.evidence import (
     canonical_final_url,
     record_fingerprints,
@@ -64,11 +66,13 @@ class FakeAdapter:
             }
         ]
         self.discovery_status = "complete"
-        self.reported_total = 1
+        self.reported_total: int | None = 1
         self.result_limit_reached = False
         self.response_body = b"<html>volatile=1</html>"
         self.plain_text = "第一条 稳定正文"
         self.metadata = {"name": "测试规则", "pub_date": "2026-01-01"}
+        self.discover_calls = 0
+        self.return_not_modified = False
 
     def healthcheck(self, endpoint: dict) -> dict:
         return {
@@ -80,6 +84,7 @@ class FakeAdapter:
         }
 
     def discover(self, endpoint: dict, registry: dict, checkpoint: dict) -> dict:
+        self.discover_calls += 1
         return {
             "items": copy.deepcopy(self.items),
             "raw_pages": [
@@ -97,7 +102,14 @@ class FakeAdapter:
             "failures": [],
         }
 
-    def fetch(self, endpoint: dict, item: dict) -> dict:
+    def fetch(self, endpoint: dict, item: dict, previous: dict | None = None) -> dict:
+        if self.return_not_modified and previous is not None:
+            return {
+                "not_modified": True,
+                "status_code": 304,
+                "final_url": item["url"],
+                "headers": {},
+            }
         return {
             "body": self.response_body,
             "content_type": "text/html",
@@ -114,6 +126,39 @@ class FakeAdapter:
 
 
 class RegistryAndFingerprintTests(unittest.TestCase):
+    def test_generic_date_extraction_requires_complete_calendar_date(self) -> None:
+        self.assertIsNone(DATE_RE.search("发布于2026年1月"))
+        self.assertEqual("2026年1月9日", DATE_RE.search("发布于2026年1月9日").group(0))
+
+    def test_health_response_is_reused_for_root_discovery(self) -> None:
+        response = type(
+            "Response",
+            (),
+            {
+                "url": "https://example.test/rules/",
+                "status_code": 200,
+                "content": b"<html><body><p>empty directory</p></body></html>",
+                "headers": {"Content-Type": "text/html"},
+                "raise_for_status": lambda self: None,
+            },
+        )()
+        calls = 0
+
+        def get(url: str):
+            nonlocal calls
+            calls += 1
+            return response
+
+        adapter = HttpHtmlAdapter()
+        adapter._get = get  # type: ignore[assignment, method-assign]
+        registry = _registry("catalog_filter")
+        endpoint = registry["endpoints"][0]
+        endpoint["adapter"] = "http_html"
+        endpoint["url"] = response.url
+        adapter.healthcheck(endpoint)
+        adapter.discover(endpoint, registry, {})
+        self.assertEqual(1, calls)
+
     def test_html_adapter_keeps_non_root_catalog_in_its_directory_tree(self) -> None:
         self.assertTrue(
             HttpHtmlAdapter._same_scope_path(
@@ -143,7 +188,7 @@ class RegistryAndFingerprintTests(unittest.TestCase):
             },
         )()
         adapter = HttpHtmlAdapter()
-        adapter._get = lambda url: response  # type: ignore[method-assign]
+        adapter._get = lambda url: response  # type: ignore[assignment, misc]
         registry = _registry("catalog_filter")
         endpoint = registry["endpoints"][0]
         endpoint["adapter"] = "http_html"
@@ -206,6 +251,126 @@ class RegistryAndFingerprintTests(unittest.TestCase):
 
 
 class SourceRunnerTests(unittest.TestCase):
+    def test_resume_skips_finished_incomplete_endpoint_unless_requested(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            adapter = FakeAdapter()
+            adapter.discovery_status = "incomplete"
+            runner = SourceRunner(
+                registry=_registry(), adapter_factory=lambda name: adapter, root=Path(tmp)
+            )
+            first = runner.run(mode="baseline")
+            runner.run(mode="baseline", resume_run_id=first["run_id"])
+            self.assertEqual(1, adapter.discover_calls)
+            runner.run(
+                mode="baseline",
+                resume_run_id=first["run_id"],
+                retry_incomplete=True,
+            )
+            self.assertEqual(2, adapter.discover_calls)
+
+    def test_resume_retries_failed_endpoint_only_when_requested(self) -> None:
+        class FailingAdapter(FakeAdapter):
+            def discover(self, endpoint: dict, registry: dict, checkpoint: dict) -> dict:
+                self.discover_calls += 1
+                raise RuntimeError("discovery failed")
+
+        with tempfile.TemporaryDirectory() as tmp:
+            adapter = FailingAdapter()
+            runner = SourceRunner(
+                registry=_registry(), adapter_factory=lambda name: adapter, root=Path(tmp)
+            )
+            first = runner.run(mode="baseline")
+            runner.run(mode="baseline", resume_run_id=first["run_id"])
+            self.assertEqual(1, adapter.discover_calls)
+            runner.run(
+                mode="baseline",
+                resume_run_id=first["run_id"],
+                retry_failed=True,
+            )
+            self.assertEqual(2, adapter.discover_calls)
+
+    def test_http_304_reuses_previous_record_without_rewrite(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            adapter = FakeAdapter()
+            runner = SourceRunner(
+                registry=_registry(), adapter_factory=lambda name: adapter, root=root
+            )
+            runner.run(mode="baseline")
+            adapter.return_not_modified = True
+            with patch(
+                "csrc_law_crawler.sources.runner.save_json",
+                wraps=storage.save_json,
+            ) as save:
+                report = runner.run(mode="incremental")
+            record_writes = [
+                call for call in save.call_args_list if "/raw/sources/records/" in str(call.args[0])
+            ]
+            self.assertEqual(0, len(record_writes))
+            self.assertEqual(1, report["endpoints"]["endpoint_test"]["not_modified"])
+
+    def test_prefetched_direct_asset_avoids_second_network_request(self) -> None:
+        class NoNetworkSession:
+            def get(self, *args, **kwargs):
+                raise AssertionError("prefetched asset must not be downloaded again")
+
+        with tempfile.TemporaryDirectory() as tmp:
+            runner = SourceRunner(
+                registry=_registry(),
+                adapter_factory=lambda name: FakeAdapter(),
+                root=Path(tmp),
+            )
+            runner.asset_session = NoNetworkSession()  # type: ignore[assignment]
+            assets, _, _ = runner._download_assets(
+                _registry()["endpoints"][0],
+                "record",
+                [
+                    {
+                        "source_url": "https://example.test/a.zip",
+                        "file_name": "a.zip",
+                        "_prefetched_body": b"PK-prefetched",
+                        "_prefetched_content_type": "application/zip",
+                        "_prefetched_final_url": "https://example.test/a.zip",
+                    }
+                ],
+                Path(tmp) / "failures.jsonl",
+                None,
+            )
+            self.assertEqual("complete", assets[0]["download_status"])
+
+    def test_checkpoint_is_written_once_after_endpoint_materialization(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            adapter = FakeAdapter()
+            adapter.items = [
+                {
+                    "url": f"https://example.test/detail/{index}",
+                    "title": f"测试规则 {index}",
+                    "upstream_id": f"upstream-{index}",
+                    "discovery_evidence": [{"page": 1}],
+                }
+                for index in range(3)
+            ]
+            adapter.reported_total = len(adapter.items)
+            with patch(
+                "csrc_law_crawler.sources.runner.save_json",
+                wraps=storage.save_json,
+            ) as save:
+                SourceRunner(
+                    registry=_registry(), adapter_factory=lambda name: adapter, root=root
+                ).run(mode="baseline")
+
+            checkpoint_writes = [
+                call
+                for call in save.call_args_list
+                if "work/checkpoints/sources" in str(call.args[0])
+            ]
+            self.assertEqual(1, len(checkpoint_writes))
+            checkpoint = json.loads(
+                (root / "work" / "checkpoints" / "sources" / "endpoint_test.json").read_text()
+            )
+            self.assertEqual(3, len(checkpoint["records"]))
+
     def test_query_scope_filters_nonmatching_details_without_source_record(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -318,9 +483,20 @@ class SourceRunnerTests(unittest.TestCase):
             self.assertFalse((root / "work" / "changes" / f"{baseline['run_id']}.jsonl").exists())
 
             adapter.response_body = b"<html>volatile=2</html>"
-            incremental = runner.run(mode="incremental")
+            with patch(
+                "csrc_law_crawler.sources.runner.save_json",
+                wraps=storage.save_json,
+            ) as save:
+                incremental = runner.run(mode="incremental")
             self.assertFalse(
                 (root / "work" / "changes" / f"{incremental['run_id']}.jsonl").exists()
+            )
+            self.assertFalse(
+                [
+                    call
+                    for call in save.call_args_list
+                    if "/raw/sources/records/" in str(call.args[0])
+                ]
             )
             record_id = source_record_id("test", upstream_id="upstream-1")
             record = json.loads(
@@ -330,6 +506,43 @@ class SourceRunnerTests(unittest.TestCase):
             self.assertTrue(Path(record["source"]["raw_file"]).is_absolute())
             self.assertTrue(
                 list((root / "raw" / "sources" / "endpoint_test" / "discoveries").glob("*.jsonl"))
+            )
+
+    def test_overlapping_endpoints_do_not_oscillate_owner_metadata(self) -> None:
+        class EndpointMetadataAdapter(FakeAdapter):
+            def parse(self, endpoint: dict, item: dict, fetched: dict) -> dict:
+                parsed = super().parse(endpoint, item, fetched)
+                parsed["metadata"]["publisher"] = endpoint["profiles"][0]["publisher"]
+                return parsed
+
+        registry = _registry()
+        second = copy.deepcopy(registry["endpoints"][0])
+        second["endpoint_id"] = "endpoint_other"
+        second["url"] = "https://other.test/list"
+        second["profiles"][0]["profile_id"] = "profile_other"
+        second["profiles"][0]["publisher"] = "另一机关"
+        registry["endpoints"].append(second)
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            runner = SourceRunner(
+                registry=registry,
+                adapter_factory=lambda name: EndpointMetadataAdapter(),
+                root=root,
+            )
+            runner.run(mode="baseline", workers=1)
+            incremental = runner.run(mode="incremental", workers=1)
+            changes = root / "work" / "changes" / f"{incremental['run_id']}.jsonl"
+            self.assertFalse(changes.exists())
+            record_id = source_record_id("test", upstream_id="upstream-1")
+            record = json.loads(
+                (root / "raw" / "sources" / "records" / "test" / f"{record_id}.json").read_text()
+            )
+            self.assertEqual("endpoint_test", record["source"]["endpoint_id"])
+            self.assertEqual("测试机关", record["metadata"]["publisher"])
+            self.assertEqual(
+                ["profile_other", "profile_test"],
+                record["source"]["profiles"],
             )
 
     def test_content_change_is_reported_but_baseline_is_not_new(self) -> None:
@@ -450,6 +663,181 @@ class SourceRunnerTests(unittest.TestCase):
             )
             self.assertNotIn(record_id, checkpoint["records"])
 
+    def test_subject_query_resume_skips_first_100_of_2660_and_cache_skips_all(self) -> None:
+        class SubjectAdapter:
+            def __init__(self, interrupt_after: int | None = None) -> None:
+                self.calls = 0
+                self.interrupt_after = interrupt_after
+
+            def healthcheck(self, endpoint: dict) -> dict:
+                return {
+                    "access_status": "reachable",
+                    "status_code": 200,
+                    "final_url": endpoint["url"],
+                    "content_type": "text/html",
+                    "_body": b"health",
+                }
+
+            def discover(self, endpoint: dict, registry: dict, checkpoint: dict) -> dict:
+                del registry, checkpoint
+                self.calls += 1
+                if self.interrupt_after is not None and self.calls > self.interrupt_after:
+                    raise KeyboardInterrupt
+                return {
+                    "items": [],
+                    "raw_pages": [],
+                    "discovery_status": "complete",
+                    "pages_completed": 1,
+                    "reported_total": 0,
+                    "queries_completed": 1,
+                    "queries_total": 1,
+                    "failures": [],
+                }
+
+            def fetch(
+                self,
+                endpoint: dict,
+                item: dict,
+                previous: dict | None = None,
+            ) -> dict:
+                raise AssertionError("zero-result subject queries do not fetch details")
+
+            def parse(self, endpoint: dict, item: dict, fetched: dict) -> dict:
+                raise AssertionError("zero-result subject queries do not parse details")
+
+        endpoint = copy.deepcopy(_registry()["endpoints"][0])
+        endpoint.update(
+            {
+                "endpoint_id": "subject_test",
+                "url": "https://gs.amac.org.cn/amac-infodisc/res/pof/manager/index.html",
+                "adapter": "subject_query",
+                "scope_mode": "subject_query",
+                "default_material_lane": "subject_snapshot",
+            }
+        )
+        registry = {
+            "schema_version": 1,
+            "query_set_version": "subject-v1",
+            "query_sets": {},
+            "endpoints": [endpoint],
+        }
+        seeds = [
+            {
+                "seed_id": f"subject_{index:04d}",
+                "entity_type": "institution",
+                "normalized_name": f"机构{index}",
+                "query_targets": ["amac_institution"],
+                "ambiguous": False,
+            }
+            for index in range(2660)
+        ]
+        seed_doc = {
+            "schema_version": 1,
+            "count": len(seeds),
+            "queryable_count": len(seeds),
+            "items": seeds,
+        }
+
+        with (
+            tempfile.TemporaryDirectory(dir="/tmp") as tmp,
+            patch(
+                "csrc_law_crawler.sources.subjects.build_subject_seeds",
+                return_value=seed_doc,
+            ),
+        ):
+            root = Path(tmp)
+            interrupted = SubjectAdapter(interrupt_after=100)
+            with self.assertRaises(KeyboardInterrupt):
+                SourceRunner(
+                    registry=registry,
+                    adapter_factory=lambda name: interrupted,
+                    root=root,
+                ).run(mode="baseline")
+            manifest_path = next((root / "work" / "source_runs").glob("*/manifest.json"))
+            run_id = manifest_path.parent.name
+            manifest = json.loads(manifest_path.read_text())
+            self.assertEqual("interrupted", manifest["status"])
+            self.assertEqual(100, interrupted.calls - 1)
+
+            resumed = SubjectAdapter()
+            report = SourceRunner(
+                registry=registry,
+                adapter_factory=lambda name: resumed,
+                root=root,
+            ).run(mode="baseline", resume_run_id=run_id)
+            self.assertEqual(2560, resumed.calls)
+            self.assertEqual("complete", report["status"])
+
+            cached = SubjectAdapter()
+            cached_report = SourceRunner(
+                registry=registry,
+                adapter_factory=lambda name: cached,
+                root=root,
+            ).run(mode="baseline")
+            self.assertEqual(0, cached.calls)
+            self.assertEqual(2660, cached_report["endpoints"]["subject_test"]["cached_queries"])
+
+    def test_workers_parallelize_hosts_but_serialize_each_host(self) -> None:
+        class Tracker:
+            def __init__(self) -> None:
+                self.lock = threading.Lock()
+                self.active = 0
+                self.global_max = 0
+                self.by_host: dict[str, int] = {}
+                self.host_max: dict[str, int] = {}
+
+            def enter(self, host: str) -> None:
+                with self.lock:
+                    self.active += 1
+                    self.global_max = max(self.global_max, self.active)
+                    self.by_host[host] = self.by_host.get(host, 0) + 1
+                    self.host_max[host] = max(self.host_max.get(host, 0), self.by_host[host])
+
+            def leave(self, host: str) -> None:
+                with self.lock:
+                    self.active -= 1
+                    self.by_host[host] -= 1
+
+        class TrackingAdapter(FakeAdapter):
+            def __init__(self, tracker: Tracker) -> None:
+                super().__init__()
+                self.tracker = tracker
+                self.items = []
+                self.reported_total = 0
+
+            def healthcheck(self, endpoint: dict) -> dict:
+                host = endpoint["url"].split("/", 3)[2]
+                self.tracker.enter(host)
+                try:
+                    time.sleep(0.05)
+                finally:
+                    self.tracker.leave(host)
+                return super().healthcheck(endpoint)
+
+        endpoints = []
+        for host_index in range(4):
+            for endpoint_index in range(2):
+                endpoint = copy.deepcopy(_registry()["endpoints"][0])
+                endpoint["endpoint_id"] = f"endpoint_{host_index}_{endpoint_index}"
+                endpoint["url"] = f"https://host-{host_index}.test/{endpoint_index}"
+                endpoints.append(endpoint)
+        registry = {
+            "schema_version": 1,
+            "query_set_version": "parallel-v1",
+            "query_sets": {"q": ["私募"]},
+            "endpoints": endpoints,
+        }
+        tracker = Tracker()
+        with tempfile.TemporaryDirectory() as tmp:
+            report = SourceRunner(
+                registry=registry,
+                adapter_factory=lambda name: TrackingAdapter(tracker),
+                root=Path(tmp),
+            ).run(mode="baseline", workers=4)
+        self.assertEqual("complete", report["status"])
+        self.assertGreaterEqual(tracker.global_max, 2)
+        self.assertTrue(all(value == 1 for value in tracker.host_max.values()))
+
 
 class PublicationAndRuntimeTests(unittest.TestCase):
     def test_atomic_directory_publish_replaces_target(self) -> None:
@@ -488,6 +876,59 @@ class PublicationAndRuntimeTests(unittest.TestCase):
                 with self.assertRaisesRegex(OSError, "publish failed"):
                     publish_directory_atomic(staged, target)
             self.assertEqual("old", (target / "old.txt").read_text())
+
+    def test_atomic_directory_publish_preserves_target_when_backup_move_fails(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            target = root / "canonical"
+            staged = root / "staged"
+            target.mkdir()
+            staged.mkdir()
+            (target / "old.txt").write_text("old")
+            (staged / "new.txt").write_text("new")
+
+            with (
+                patch(
+                    "csrc_law_crawler.core.io.os.replace",
+                    side_effect=PermissionError("target is busy"),
+                ),
+                patch("csrc_law_crawler.core.io.time.sleep"),
+            ):
+                with self.assertRaisesRegex(PermissionError, "target is busy"):
+                    publish_directory_atomic(staged, target)
+
+            self.assertEqual("old", (target / "old.txt").read_text())
+            self.assertEqual("new", (staged / "new.txt").read_text())
+
+    def test_atomic_directory_publish_retries_transient_permission_error(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            target = root / "canonical"
+            staged = root / "staged"
+            target.mkdir()
+            staged.mkdir()
+            (target / "old.txt").write_text("old")
+            (staged / "new.txt").write_text("new")
+            real_replace = os.replace
+            calls = 0
+
+            def flaky(source: Path, destination: Path) -> None:
+                nonlocal calls
+                calls += 1
+                if calls == 1:
+                    raise PermissionError("target is briefly busy")
+                real_replace(source, destination)
+
+            with (
+                patch("csrc_law_crawler.core.io.os.replace", side_effect=flaky),
+                patch("csrc_law_crawler.core.io.time.sleep") as sleep,
+            ):
+                publish_directory_atomic(staged, target)
+
+            sleep.assert_called_once()
+            self.assertEqual("new", (target / "new.txt").read_text())
 
     def test_run_context_maps_exit_two_to_incomplete(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

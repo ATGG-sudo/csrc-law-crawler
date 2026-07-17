@@ -83,6 +83,7 @@ py-modules = [
 [tool.setuptools.package-data]
 "csrc_law_crawler.sources.amac" = ["*.pem"]
 "csrc_law_crawler.sources" = ["csrc_sources.json"]
+"csrc_law_crawler.processing.catalog" = ["classification_overrides.json"]
 
 [project.scripts]
 csrc-crawler = "csrc_law_crawler.cli.main:main"

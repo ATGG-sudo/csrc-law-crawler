@@ -2,6 +2,18 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "additionalProperties": true,
   "properties": {
+    "enforcement_classification": {
+      "additionalProperties": true,
+      "properties": {
+        "category": {
+          "enum": ["penalties", "self_regulatory_measure", "abnormal_operation", "missing_institution", "other_enforcement"]
+        },
+        "subtype": {
+          "enum": ["disciplinary_decision", "disciplinary_prior_notice", "disciplinary_review_decision", "other"]
+        }
+      },
+      "type": ["object", "null"]
+    },
     "document_type": {
       "type": "string"
     },
@@ -10,6 +22,19 @@
     },
     "metadata": {
       "type": "object"
+    },
+    "reference_lifecycle": {
+      "additionalProperties": true,
+      "properties": {
+        "status": {
+          "enum": ["not_applicable", "unfinalized", "finalized", "withdrawn", "unknown"]
+        }
+      },
+      "required": ["status"],
+      "type": "object"
+    },
+    "material_classification": {
+      "$ref": "#/$defs/materialClassification"
     },
     "preferred_content": {
       "type": "object"
@@ -36,10 +61,42 @@
     "title",
     "document_type",
     "status",
+    "material_classification",
     "metadata",
     "preferred_content",
     "sources"
   ],
   "title": "CatalogEntity",
-  "type": "object"
+  "type": "object",
+  "$defs": {
+    "materialClassification": {
+      "type": "object",
+      "additionalProperties": true,
+      "properties": {
+        "lane": {
+          "enum": ["rule", "reference", "unknown"]
+        },
+        "category": {
+          "enum": [
+            "law_regulation",
+            "normative_document",
+            "self_regulatory_rule",
+            "business_rule",
+            "publication_consultation",
+            "interpretation_qa",
+            "template_guidance",
+            "research_statistics",
+            "enforcement_reference",
+            "other_reference",
+            "unknown"
+          ]
+        },
+        "basis": {"type": "string"},
+        "rule_id": {"type": "string"},
+        "confidence": {"type": "number", "minimum": 0, "maximum": 1},
+        "evidence": {"type": "object"}
+      },
+      "required": ["lane", "category", "basis", "rule_id", "confidence", "evidence"]
+    }
+  }
 }

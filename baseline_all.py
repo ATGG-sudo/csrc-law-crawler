@@ -13,7 +13,7 @@ from csrc_law_crawler.sources.digest import build_digest
 from csrc_law_crawler.sources.publish import stage_and_publish_canonical
 from csrc_law_crawler.sources.registry import load_registry
 from csrc_law_crawler.sources.runner import SourceRunner
-from csrc_law_crawler.sources.subjects import build_subject_seeds
+from config import WORKERS
 from runtime import log_event
 from storage import load_json, output_dir, run_with_output_lock, save_json, utc_now_iso
 
@@ -58,46 +58,62 @@ def _mark_publication(
     return report
 
 
-def run_baseline_all(*, resume_run_id: str | None = None) -> dict[str, Any]:
+def run_baseline_all(
+    *,
+    resume_run_id: str | None = None,
+    verify_incremental: bool = False,
+    refresh_subjects: bool = False,
+    retry_failed: bool = False,
+    retry_incomplete: bool = False,
+    workers: int = WORKERS,
+) -> dict[str, Any]:
     root = output_dir()
     registry = load_registry()
     runner = SourceRunner(registry=registry, root=root)
 
-    def refresh_subjects() -> None:
-        build_subject_seeds(root)
-
     baseline = runner.run(
         mode="baseline",
         resume_run_id=resume_run_id,
-        before_subject_queries=refresh_subjects,
+        workers=workers,
+        refresh_subjects=refresh_subjects,
+        retry_failed=retry_failed,
+        retry_incomplete=retry_incomplete,
     )
-    seeds = build_subject_seeds(root)
+    seeds = load_json(root / "work" / "subject_seeds.json", {})
     cases = publish_case_records(root)
     publication = stage_and_publish_canonical(run_id=baseline["run_id"], root=root)
     baseline = _mark_publication(baseline, registry, root)
     baseline_digest = build_digest(run_id=baseline["run_id"], root=root)
 
-    incremental = SourceRunner(registry=registry, root=root).run(
-        mode="incremental",
-        before_subject_queries=refresh_subjects,
-    )
-    incremental_changes = _change_count(root, incremental["run_id"])
+    incremental = None
+    incremental_changes = None
     incremental_publication = None
-    if incremental_changes:
-        publish_case_records(root)
-        incremental_publication = stage_and_publish_canonical(
-            run_id=incremental["run_id"],
-            root=root,
+    incremental_digest = None
+    if verify_incremental:
+        incremental = SourceRunner(registry=registry, root=root).run(
+            mode="incremental",
+            workers=workers,
+            refresh_subjects=refresh_subjects,
+            retry_failed=retry_failed,
+            retry_incomplete=retry_incomplete,
         )
-    incremental = _mark_publication(incremental, registry, root)
-    incremental_digest = build_digest(run_id=incremental["run_id"], root=root)
+        incremental_changes = _change_count(root, incremental["run_id"])
+        if incremental_changes:
+            publish_case_records(root)
+            incremental_publication = stage_and_publish_canonical(
+                run_id=incremental["run_id"],
+                root=root,
+            )
+        incremental = _mark_publication(incremental, registry, root)
+        incremental_digest = build_digest(run_id=incremental["run_id"], root=root)
     status = (
         "complete"
-        if baseline["status"] == "complete" and incremental["status"] == "complete"
+        if baseline["status"] == "complete"
+        and (incremental is None or incremental["status"] == "complete")
         else "incomplete"
     )
     report = {
-        "schema_version": 1,
+        "schema_version": 2,
         "status": status,
         "generated_at": utc_now_iso(),
         "registry_endpoints": len(registry["endpoints"]),
@@ -110,21 +126,39 @@ def run_baseline_all(*, resume_run_id: str | None = None) -> dict[str, Any]:
         "cases": cases,
         "publication": publication,
         "baseline_digest": baseline_digest["counts"],
+        "incremental_verification": (
+            "skipped"
+            if incremental is None
+            else "complete"
+            if incremental["status"] == "complete"
+            else "incomplete"
+        ),
         "incremental": incremental,
         "incremental_changes": incremental_changes,
         "incremental_publication": incremental_publication,
-        "incremental_digest": incremental_digest["counts"],
+        "incremental_digest": incremental_digest["counts"] if incremental_digest else None,
     }
     save_json(root / "reports" / "source_baselines" / "baseline_all_latest.json", report)
     return report
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="执行工作簿全部信源的可信基线与增量核验")
+    parser = argparse.ArgumentParser(description="执行工作簿全部信源基线，可选立即增量核验")
     parser.add_argument("--resume", metavar="RUN_ID")
+    parser.add_argument("--verify-incremental", action="store_true")
+    parser.add_argument("--refresh-subjects", action="store_true")
+    parser.add_argument("--retry-failed", action="store_true")
+    parser.add_argument("--retry-incomplete", action="store_true")
     args = parser.parse_args()
     try:
-        report = run_baseline_all(resume_run_id=args.resume)
+        report = run_baseline_all(
+            resume_run_id=args.resume,
+            verify_incremental=args.verify_incremental,
+            refresh_subjects=args.refresh_subjects,
+            retry_failed=args.retry_failed,
+            retry_incomplete=args.retry_incomplete,
+            workers=WORKERS,
+        )
     except Exception as exc:
         log_event(
             "baseline_all_failed",
@@ -138,7 +172,9 @@ def main() -> int:
             {
                 "status": report["status"],
                 "baseline_run_id": report["baseline"]["run_id"],
-                "incremental_run_id": report["incremental"]["run_id"],
+                "incremental_run_id": (
+                    report["incremental"]["run_id"] if report["incremental"] else None
+                ),
                 "incremental_changes": report["incremental_changes"],
             },
             ensure_ascii=False,

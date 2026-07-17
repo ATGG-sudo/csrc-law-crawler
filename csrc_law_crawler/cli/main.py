@@ -16,7 +16,7 @@ class Command:
 
 
 COMMANDS: dict[str, Command] = {
-    "baseline-all": Command("baseline_all", "baseline-all", "执行全部信源基线与立即增量核验"),
+    "baseline-all": Command("baseline_all", "baseline-all", "执行全部信源基线，可选立即增量核验"),
     "crawl": Command("crawl", "crawl", "抓取 NERIS 法规和执法文书"),
     "enhance": Command("enhance", "enhance", "执行修订、案例、文书增强阶段"),
     "repair": Command("repair", "repair", "执行 P0-P2 多源修复流水线"),

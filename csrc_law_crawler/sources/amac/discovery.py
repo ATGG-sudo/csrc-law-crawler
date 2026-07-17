@@ -318,11 +318,10 @@ def discover_self_regulatory_measure_candidates(
     )
 
 
-def discover_self_regulatory_management_candidates(
+def _discover_categorized_section_candidates(
     client: AmacClient,
-    *,
-    sections: Iterable[tuple[str, str, str]] = DEFAULT_SELF_REGULATORY_MANAGEMENT_SECTIONS,
-    max_pages: int = DEFAULT_SELF_REGULATORY_MANAGEMENT_PAGES,
+    sections: Iterable[tuple[str, str, str]],
+    max_pages: int,
 ) -> list[dict[str, Any]]:
     page_limit: int | None = None if max_pages == 0 else max_pages
     candidates: list[dict[str, Any]] = []
@@ -336,6 +335,15 @@ def discover_self_regulatory_management_candidates(
             )
         )
     return candidates
+
+
+def discover_self_regulatory_management_candidates(
+    client: AmacClient,
+    *,
+    sections: Iterable[tuple[str, str, str]] = DEFAULT_SELF_REGULATORY_MANAGEMENT_SECTIONS,
+    max_pages: int = DEFAULT_SELF_REGULATORY_MANAGEMENT_PAGES,
+) -> list[dict[str, Any]]:
+    return _discover_categorized_section_candidates(client, sections, max_pages)
 
 
 def discover_industry_research_candidates(
@@ -344,18 +352,7 @@ def discover_industry_research_candidates(
     sections: Iterable[tuple[str, str, str]] = DEFAULT_INDUSTRY_RESEARCH_SECTIONS,
     max_pages: int = DEFAULT_INDUSTRY_RESEARCH_PAGES,
 ) -> list[dict[str, Any]]:
-    page_limit: int | None = None if max_pages == 0 else max_pages
-    candidates: list[dict[str, Any]] = []
-    for section_name, section_path, discovery_channel in sections:
-        candidates.extend(
-            discover_section_candidates(
-                client,
-                sections=[(section_name, section_path)],
-                discovery_channel=discovery_channel,
-                max_pages=page_limit,
-            )
-        )
-    return candidates
+    return _discover_categorized_section_candidates(client, sections, max_pages)
 
 
 def discover_xwfb_rule_notice_candidates(

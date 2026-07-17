@@ -42,12 +42,9 @@ def confidence_band(confidence: float) -> str:
 def catalog_rule_calibration() -> dict[str, Any]:
     return {
         "confidence_bands": [
-            {"name": name, "minimum_confidence": minimum}
-            for name, minimum in CONFIDENCE_BANDS
+            {"name": name, "minimum_confidence": minimum} for name, minimum in CONFIDENCE_BANDS
         ],
-        "source_match_review_confidence_threshold": (
-            SOURCE_MATCH_REVIEW_CONFIDENCE_THRESHOLD
-        ),
+        "source_match_review_confidence_threshold": (SOURCE_MATCH_REVIEW_CONFIDENCE_THRESHOLD),
     }
 
 
@@ -74,6 +71,66 @@ AMAC_SUPPORTING_MATERIAL = CatalogRule(
     "Classify AMAC records as supporting material when no stronger classifier applies.",
     0.55,
     ("title", "url"),
+)
+MATERIAL_MANUAL_OVERRIDE = CatalogRule(
+    "material.manual_override",
+    "Use an evidence-backed manual classification override.",
+    1.0,
+    ("canonical_id", "verified_at", "evidence_url", "note"),
+)
+MATERIAL_AMAC_INDUSTRY_REFERENCE = CatalogRule(
+    "material.amac_industry_reference",
+    "Treat AMAC industry research sections as reference material.",
+    1.0,
+    ("source_category", "source_section"),
+)
+MATERIAL_AMAC_ENFORCEMENT_REFERENCE = CatalogRule(
+    "material.amac_enforcement_reference",
+    "Treat AMAC discipline and institution-management sections as enforcement reference material.",
+    1.0,
+    ("source_category", "source_section"),
+)
+MATERIAL_CONSULTATION_TITLE = CatalogRule(
+    "material.consultation_title",
+    "Treat explicit consultation or draft titles as reference material.",
+    0.99,
+    ("title", "metadata.name"),
+)
+MATERIAL_REFERENCE_TITLE = CatalogRule(
+    "material.reference_title",
+    "Treat explicit interpretation, template, training, or research titles as reference material.",
+    0.95,
+    ("title", "metadata.name"),
+)
+MATERIAL_PUBLISHING_WRAPPER = CatalogRule(
+    "material.publishing_wrapper",
+    "Treat a publication wrapper as reference material when it publishes a distinct canonical document.",
+    0.95,
+    ("publishes",),
+)
+MATERIAL_SOURCE_RULE_LANE = CatalogRule(
+    "material.source_rule_lane",
+    "Use a trusted source rule lane or official rule catalog as normative material evidence.",
+    0.99,
+    ("material_lane", "source_system", "raw_status"),
+)
+MATERIAL_SOURCE_REFERENCE_LANE = CatalogRule(
+    "material.source_reference_lane",
+    "Use a trusted source reference lane or reference document type.",
+    0.99,
+    ("material_lane", "document_type"),
+)
+MATERIAL_AMAC_RULE_HEURISTIC = CatalogRule(
+    "material.amac_rule_heuristic",
+    "Treat an AMAC rule-like record as normative when no stronger reference signal applies.",
+    0.85,
+    ("document_type", "title"),
+)
+MATERIAL_INSUFFICIENT_EVIDENCE = CatalogRule(
+    "material.insufficient_evidence",
+    "Leave material nature unknown when no reliable rule or reference signal applies.",
+    0.5,
+    ("document_type", "source_system", "title"),
 )
 MATCH_NO_NERIS_TITLE = CatalogRule(
     "match.neris_title_absent",
@@ -159,11 +216,65 @@ EFFECT_INSUFFICIENT_EVIDENCE = CatalogRule(
     0.5,
     ("source_system", "document_type", "raw_status"),
 )
+EFFECT_MANUAL_OVERRIDE = CatalogRule(
+    "effectiveness.manual_override",
+    "Use an evidence-backed manual effectiveness override.",
+    1.0,
+    ("canonical_id", "verified_at", "evidence_url", "note"),
+)
+EFFECT_REFERENCE_MATERIAL = CatalogRule(
+    "effectiveness.reference_material",
+    "Effectiveness does not apply to reference material.",
+    1.0,
+    ("material_classification",),
+)
+EFFECT_PENDING = CatalogRule(
+    "effectiveness.pending",
+    "Treat a promulgated rule as pending before its effective date.",
+    1.0,
+    ("raw_status", "effective_date", "as_of"),
+)
+EFFECT_INEFFECTIVE_DATE = CatalogRule(
+    "effectiveness.ineffective_date",
+    "Treat a rule as historical once its ineffective date is reached.",
+    1.0,
+    ("ineffective_date", "as_of"),
+)
+EFFECT_UNVERIFIED_OFFICIAL_RULE = CatalogRule(
+    "effectiveness.unverified_official_rule",
+    "Keep an official rule without currentness evidence in the review queue.",
+    0.75,
+    ("source_system", "document_type", "raw_status"),
+)
+EFFECT_TRIAL_COMMENCED = CatalogRule(
+    "effectiveness.trial_official_commenced",
+    "Treat an officially promulgated trial rule as current after a proven commencement date.",
+    0.95,
+    ("title", "effective_date", "as_of", "source_system", "page_role"),
+)
 TRIAL_REPLACEMENT = CatalogRule(
     "relation.trial_replacement.same_title_later_formal",
     "Infer that a later formal same-title rule supersedes an earlier trial rule.",
     0.86,
     ("normalized_title", "trial_pub_date", "formal_pub_date", "pub_org"),
+)
+RELATION_DRAFT_FINALIZED = CatalogRule(
+    "relation.draft_finalized.exact_instrument",
+    "Link a formal rule to an earlier consultation draft with the same exact instrument name.",
+    0.98,
+    ("instrument_title", "pub_org", "draft_pub_date", "formal_pub_date"),
+)
+RELATION_SAME_INSTRUMENT_COPY = CatalogRule(
+    "relation.same_instrument_copy.title_fileno",
+    "Link source copies whose exact instrument title and document number agree.",
+    1.0,
+    ("instrument_title", "fileno"),
+)
+RELATION_EXPLICIT_SUCCESSOR = CatalogRule(
+    "relation.explicit_successor.body_clause",
+    "Infer supersession only from an explicit revision or repeal clause in the official text.",
+    0.99,
+    ("old_title", "new_title", "clause"),
 )
 RELATION_OFFICIAL_SUCCESSOR = CatalogRule(
     "relation.official_successor.known_revision_chain",
@@ -209,6 +320,19 @@ AMAC_CLASSIFICATION_RULES = (
     AMAC_SUPPORTING_MATERIAL,
 )
 
+MATERIAL_CLASSIFICATION_RULES = (
+    MATERIAL_MANUAL_OVERRIDE,
+    MATERIAL_AMAC_INDUSTRY_REFERENCE,
+    MATERIAL_AMAC_ENFORCEMENT_REFERENCE,
+    MATERIAL_CONSULTATION_TITLE,
+    MATERIAL_REFERENCE_TITLE,
+    MATERIAL_PUBLISHING_WRAPPER,
+    MATERIAL_SOURCE_RULE_LANE,
+    MATERIAL_SOURCE_REFERENCE_LANE,
+    MATERIAL_AMAC_RULE_HEURISTIC,
+    MATERIAL_INSUFFICIENT_EVIDENCE,
+)
+
 MATCHING_RULES = (
     MATCH_NO_NERIS_TITLE,
     MATCH_TITLE_FILENO,
@@ -220,13 +344,15 @@ MATCHING_RULES = (
 
 EFFECTIVENESS_RULES = (
     EFFECT_EXPLICIT_HISTORICAL,
-    EFFECT_COMMENT_DRAFT,
     EFFECT_EXPLICIT_CURRENT,
     EFFECT_SUPERSEDED_BY_CATALOG,
-    EFFECT_REFERENCE_DOCUMENT_TYPE,
-    EFFECT_REFERENCE_TITLE,
-    EFFECT_AMAC_OFFICIAL_DEFAULT,
     EFFECT_INSUFFICIENT_EVIDENCE,
+    EFFECT_MANUAL_OVERRIDE,
+    EFFECT_REFERENCE_MATERIAL,
+    EFFECT_PENDING,
+    EFFECT_INEFFECTIVE_DATE,
+    EFFECT_UNVERIFIED_OFFICIAL_RULE,
+    EFFECT_TRIAL_COMMENCED,
 )
 
 RELATION_RULES = (
@@ -234,6 +360,9 @@ RELATION_RULES = (
     RELATION_OFFICIAL_SUCCESSOR,
     RELATION_AMAC_PAGE_ATTACHMENT,
     RELATION_NERIS_TITLE_QUOTED_DOCUMENT,
+    RELATION_DRAFT_FINALIZED,
+    RELATION_SAME_INSTRUMENT_COPY,
+    RELATION_EXPLICIT_SUCCESSOR,
 )
 
 REVIEW_RULES = (
@@ -244,6 +373,7 @@ REVIEW_RULES = (
 
 ALL_CATALOG_RULES = (
     *AMAC_CLASSIFICATION_RULES,
+    *MATERIAL_CLASSIFICATION_RULES,
     *MATCHING_RULES,
     *EFFECTIVENESS_RULES,
     *RELATION_RULES,
@@ -257,7 +387,17 @@ REFERENCE_TYPES = ("publication_notice", "regulatory_practice", "supporting_mate
 OFFICIAL_RULE_TYPES = ("regulation", "self_regulatory_rule")
 HISTORICAL_STATUSES = ("已失效", "失效", "已废止", "废止", "已被修改", "被修改")
 COMMENT_DRAFT_PATTERNS = ("征求意见稿", "公开征求意见", "征求意见的通知", "征求意见通知", "草案")
-REFERENCE_TITLE_PATTERNS = ("参考模板", "修订说明", "起草说明", "填写说明", "说明材料", "问题解答", "业务问答", "解读", "培训")
+REFERENCE_TITLE_PATTERNS = (
+    "参考模板",
+    "修订说明",
+    "起草说明",
+    "填写说明",
+    "说明材料",
+    "问题解答",
+    "业务问答",
+    "解读",
+    "培训",
+)
 
 
 def classify_amac_document(title: str, url: str) -> tuple[str, CatalogRule]:

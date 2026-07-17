@@ -4,6 +4,10 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from csrc_law_crawler.processing.catalog.classification import (
+    enforcement_classification_for,
+    source_web_classification,
+)
 from csrc_law_crawler.sources.registry import load_registry
 from storage import load_json, output_dir, save_json
 
@@ -40,16 +44,31 @@ def publish_case_records(root: Path | None = None) -> dict[str, int]:
         metadata.setdefault("id", record_id)
         metadata.setdefault("name", metadata.get("title") or record_id)
         content = record.get("content") or {}
+        web_classification = source_web_classification(
+            metadata,
+            page_url=source.get("page_url"),
+            material_lane="case",
+        )
+        enforcement_classification = enforcement_classification_for(
+            {
+                "title": metadata.get("name"),
+                "metadata": metadata,
+                "sources": [{"page_url": source.get("page_url"), **web_classification}],
+            },
+            material_classification={"lane": "reference", "category": "enforcement_reference"},
+        )
         writ = {
             "metadata": metadata,
             "body": str(content.get("plain_text") or ""),
             "legal_basis": content.get("legal_basis") or metadata.get("legal_basis") or [],
             "parties": content.get("parties") or metadata.get("parties") or [],
+            "enforcement_classification": enforcement_classification,
             "source": {
                 "source_system": record.get("source_system"),
                 "source_record_id": record_id,
                 "page_url": source.get("page_url"),
                 "source_record_file": str(path.relative_to(output_root)),
+                **web_classification,
             },
         }
         save_json(writs_root / f"writ_{record_id}.json", writ)

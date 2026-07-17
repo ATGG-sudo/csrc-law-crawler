@@ -3,6 +3,9 @@
 from __future__ import annotations
 
 from collections import deque
+from datetime import datetime, timezone
+from email.utils import parsedate_to_datetime
+from http import HTTPStatus
 import json
 import math
 import random
@@ -23,9 +26,11 @@ from .registry import endpoint_query_terms
 
 PAGE_LIMIT = 500
 STRUCTURED_PAGE_LIMIT = 5000
+AMAC_SUBJECT_DELAY_MIN = 0.25
+AMAC_SUBJECT_DELAY_MAX = 0.7
 CONTENT_EXTENSIONS = (".html", ".htm", ".shtml", ".pdf", ".doc", ".docx", ".xls", ".xlsx")
 ASSET_EXTENSIONS = (".pdf", ".doc", ".docx", ".xls", ".xlsx", ".zip", ".rar")
-DATE_RE = re.compile(r"(?:19|20)\d{2}[-年./]\d{1,2}(?:[-月./]\d{1,2}日?)?")
+DATE_RE = re.compile(r"(?:19|20)\d{2}[-年./]\d{1,2}[-月./]\d{1,2}日?")
 PAGE_QUERY_RE = re.compile(r"(?:^|[?&])(?:page|pageno|pageindex|currentpage)=\d+", re.I)
 PAGE_PATH_RE = re.compile(r"(?:index|list)[_-]?\d+\.(?:s?html?)$", re.I)
 SKIP_TITLES = {
@@ -53,7 +58,12 @@ class SourceAdapter(Protocol):
         checkpoint: dict[str, Any],
     ) -> dict[str, Any]: ...
 
-    def fetch(self, endpoint: dict[str, Any], item: dict[str, Any]) -> dict[str, Any]: ...
+    def fetch(
+        self,
+        endpoint: dict[str, Any],
+        item: dict[str, Any],
+        previous: dict[str, Any] | None = None,
+    ) -> dict[str, Any]: ...
 
     def parse(
         self,
@@ -81,6 +91,24 @@ def access_status_for_exception(exc: BaseException) -> str:
     return "network_error"
 
 
+def _fetched_api_record(item: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "body": json.dumps(item["api_record"], ensure_ascii=False, sort_keys=True).encode("utf-8"),
+        "status_code": HTTPStatus.OK.value,
+        "content_type": "application/json",
+        "final_url": item["url"],
+        "headers": {},
+    }
+
+
+def subject_seed_matches_endpoint(endpoint: dict[str, Any], seed: dict[str, Any]) -> bool:
+    host = (urlsplit(endpoint["url"]).hostname or "").lower()
+    target_prefix = "amac_" if host == "gs.amac.org.cn" else "eid"
+    return not seed.get("ambiguous") and any(
+        str(target).startswith(target_prefix) for target in seed.get("query_targets") or []
+    )
+
+
 class HttpHtmlAdapter:
     def __init__(self) -> None:
         self.session = requests.Session()
@@ -91,10 +119,37 @@ class HttpHtmlAdapter:
                 "Accept": "text/html,application/xhtml+xml,application/json;q=0.9,*/*;q=0.8",
             }
         )
+        self._health_response: requests.Response | None = None
+        self._health_request_url: str | None = None
+        self.stats: dict[str, int | float] = {
+            "request_attempts": 0,
+            "retries": 0,
+            "request_seconds": 0.0,
+            "sleep_seconds": 0.0,
+        }
+
+    def _sleep(self, seconds: float) -> None:
+        self.stats["sleep_seconds"] += seconds
+        time.sleep(seconds)
+
+    @staticmethod
+    def _retry_after(value: str | None, fallback: float) -> float:
+        if not value:
+            return fallback
+        try:
+            return max(0.0, float(value))
+        except ValueError:
+            try:
+                parsed = parsedate_to_datetime(value)
+            except (TypeError, ValueError, OverflowError):
+                return fallback
+            if parsed.tzinfo is None:
+                parsed = parsed.replace(tzinfo=timezone.utc)
+            return max(0.0, (parsed - datetime.now(timezone.utc)).total_seconds())
 
     def _pause(self) -> None:
         if SETTINGS.delay_max > 0:
-            time.sleep(random.uniform(SETTINGS.delay_min, SETTINGS.delay_max))
+            self._sleep(random.uniform(SETTINGS.delay_min, SETTINGS.delay_max))
 
     def _get(self, url: str, **kwargs: Any) -> requests.Response:
         last_error: BaseException | None = None
@@ -102,25 +157,37 @@ class HttpHtmlAdapter:
         for attempt in range(1, SETTINGS.max_retries + 1):
             self._pause()
             try:
-                response = self.session.request(
-                    method,
-                    url,
-                    timeout=60,
-                    allow_redirects=True,
-                    **kwargs,
-                )
+                started = time.monotonic()
+                self.stats["request_attempts"] += 1
+                try:
+                    response = self.session.request(
+                        method,
+                        url,
+                        timeout=60,
+                        allow_redirects=True,
+                        **kwargs,
+                    )
+                finally:
+                    self.stats["request_seconds"] += time.monotonic() - started
                 if response.status_code >= 500 or response.status_code in {408, 429}:
                     last_error = requests.HTTPError(
                         f"retryable HTTP {response.status_code}", response=response
                     )
                     if attempt < SETTINGS.max_retries:
-                        time.sleep(SETTINGS.retry_backoff_base * attempt)
+                        self.stats["retries"] += 1
+                        wait = self._retry_after(
+                            response.headers.get("Retry-After"),
+                            SETTINGS.retry_backoff_base * attempt,
+                        )
+                        response.close()
+                        self._sleep(wait)
                         continue
                 return response
             except requests.RequestException as exc:
                 last_error = exc
                 if attempt < SETTINGS.max_retries:
-                    time.sleep(SETTINGS.retry_backoff_base * attempt)
+                    self.stats["retries"] += 1
+                    self._sleep(SETTINGS.retry_backoff_base * attempt)
                     continue
                 raise
         if isinstance(last_error, BaseException):
@@ -138,6 +205,8 @@ class HttpHtmlAdapter:
                 "error_message": str(exc),
                 "elapsed_seconds": round(time.monotonic() - started, 3),
             }
+        self._health_response = response
+        self._health_request_url = endpoint["url"]
         return {
             "access_status": access_status_for_response(response),
             "status_code": response.status_code,
@@ -147,6 +216,17 @@ class HttpHtmlAdapter:
             "_body": response.content,
             "elapsed_seconds": round(time.monotonic() - started, 3),
         }
+
+    def _initial_response(self, url: str) -> requests.Response | None:
+        response = self._health_response
+        requested = self._health_request_url
+        if response is None or canonical_final_url(
+            str(requested or response.url)
+        ) != canonical_final_url(url):
+            return None
+        self._health_response = None
+        self._health_request_url = None
+        return response
 
     @staticmethod
     def _is_page_link(text: str, url: str) -> bool:
@@ -238,7 +318,7 @@ class HttpHtmlAdapter:
                 continue
             seen_pages.add(page_key)
             try:
-                response = self._get(page_url)
+                response = self._initial_response(page_url) or self._get(page_url)
                 response.raise_for_status()
             except requests.RequestException as exc:
                 failures.append(
@@ -362,9 +442,30 @@ class HttpHtmlAdapter:
             "failures": failures,
         }
 
-    def fetch(self, endpoint: dict[str, Any], item: dict[str, Any]) -> dict[str, Any]:
+    def fetch(
+        self,
+        endpoint: dict[str, Any],
+        item: dict[str, Any],
+        previous: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
         del endpoint
-        response = self._get(item["url"])
+        validators = ((previous or {}).get("source") or {}).get("http_validators") or {}
+        headers = {
+            name: value
+            for name, value in {
+                "If-None-Match": validators.get("etag"),
+                "If-Modified-Since": validators.get("last_modified"),
+            }.items()
+            if value
+        }
+        response = self._get(item["url"], headers=headers)
+        if response.status_code == HTTPStatus.NOT_MODIFIED:
+            return {
+                "not_modified": True,
+                "status_code": response.status_code,
+                "final_url": response.url,
+                "headers": dict(response.headers),
+            }
         response.raise_for_status()
         return {
             "body": response.content,
@@ -398,6 +499,9 @@ class HttpHtmlAdapter:
                         "label": title,
                         "file_name": final_url.rsplit("/", 1)[-1],
                         "download_status": "discovered",
+                        "_prefetched_body": bytes(fetched["body"]),
+                        "_prefetched_content_type": content_type,
+                        "_prefetched_final_url": final_url,
                     }
                 ],
             }
@@ -474,7 +578,7 @@ class CsrcAdapter(HttpHtmlAdapter):
         checkpoint: dict[str, Any],
     ) -> dict[str, Any]:
         del checkpoint
-        entry = self._get(endpoint["url"])
+        entry = self._initial_response(endpoint["url"]) or self._get(endpoint["url"])
         entry.raise_for_status()
         channel_id = self._channel_id(entry.content, endpoint["url"])
         page_size = 20
@@ -572,16 +676,14 @@ class CsrcAdapter(HttpHtmlAdapter):
             "failures": [],
         }
 
-    def fetch(self, endpoint: dict[str, Any], item: dict[str, Any]) -> dict[str, Any]:
-        del endpoint
-        body = json.dumps(item["api_record"], ensure_ascii=False, sort_keys=True).encode("utf-8")
-        return {
-            "body": body,
-            "status_code": 200,
-            "content_type": "application/json",
-            "final_url": item["url"],
-            "headers": {},
-        }
+    def fetch(
+        self,
+        endpoint: dict[str, Any],
+        item: dict[str, Any],
+        previous: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        del endpoint, previous
+        return _fetched_api_record(item)
 
     def parse(
         self,
@@ -634,6 +736,9 @@ class CsrcAdapter(HttpHtmlAdapter):
 
 
 class SubjectQueryAdapter(HttpHtmlAdapter):
+    def _pause(self) -> None:
+        self._sleep(random.uniform(AMAC_SUBJECT_DELAY_MIN, AMAC_SUBJECT_DELAY_MAX))
+
     def _amac_query(
         self,
         endpoint: dict[str, Any],
@@ -709,17 +814,13 @@ class SubjectQueryAdapter(HttpHtmlAdapter):
     ) -> dict[str, Any]:
         del registry, checkpoint
         host = (urlsplit(endpoint["url"]).hostname or "").lower()
-        target_prefix = "amac_" if host == "gs.amac.org.cn" else "eid"
         seeds = [
             item
             for item in endpoint.get("subject_seeds") or []
-            if not item.get("ambiguous")
-            and any(
-                str(target).startswith(target_prefix) for target in item.get("query_targets") or []
-            )
+            if subject_seed_matches_endpoint(endpoint, item)
         ]
         if host != "gs.amac.org.cn":
-            response = self._get(endpoint["url"])
+            response = self._initial_response(endpoint["url"]) or self._get(endpoint["url"])
             return {
                 "items": [],
                 "raw_pages": [
@@ -777,16 +878,14 @@ class SubjectQueryAdapter(HttpHtmlAdapter):
             "failures": failures,
         }
 
-    def fetch(self, endpoint: dict[str, Any], item: dict[str, Any]) -> dict[str, Any]:
-        del endpoint
-        body = json.dumps(item["api_record"], ensure_ascii=False, sort_keys=True).encode("utf-8")
-        return {
-            "body": body,
-            "status_code": 200,
-            "content_type": "application/json",
-            "final_url": item["url"],
-            "headers": {},
-        }
+    def fetch(
+        self,
+        endpoint: dict[str, Any],
+        item: dict[str, Any],
+        previous: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        del endpoint, previous
+        return _fetched_api_record(item)
 
     def parse(
         self,
@@ -836,4 +935,5 @@ __all__ = [
     "access_status_for_exception",
     "access_status_for_response",
     "adapter_for",
+    "subject_seed_matches_endpoint",
 ]

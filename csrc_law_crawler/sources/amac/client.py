@@ -20,7 +20,7 @@ from config import (
 )
 from download_utils import DownloadedBytes, RetryableContentError, read_binary_response
 from failure_taxonomy import FailureReason
-from http_policy import HTTPPolicy
+from http_policy import HTTPPolicy, record_http_retry
 from runtime import log_event, log_metric
 
 
@@ -87,33 +87,6 @@ class AmacClient:
             verify_tls=self.verify_tls,
         )
 
-    def _record_retry(
-        self,
-        *,
-        url: str,
-        attempt: int,
-        wait: float,
-        reason: FailureReason,
-        exc: BaseException | None = None,
-    ) -> None:
-        fields: dict[str, Any] = {}
-        summary = "拦截/超时" if exc is None else f"错误 {exc!r}"
-        if exc is not None:
-            fields["error_type"] = type(exc).__name__
-            fields["error_message"] = str(exc)
-        log_event(
-            "http_retry",
-            level="WARNING",
-            message=f"  [{summary}，{wait:.1f}s 后重试 {attempt}/{MAX_RETRIES}]",
-            url=url,
-            attempt=attempt,
-            max_retries=MAX_RETRIES,
-            wait_seconds=round(wait, 3),
-            reason=reason,
-            **fields,
-        )
-        log_metric("http_retries_total", source=self.source_name, reason=reason)
-
     def get(self, url: str, **kwargs: Any) -> requests.Response:
         last_error: Exception | None = None
         stream = bool(kwargs.get("stream"))
@@ -140,7 +113,9 @@ class AmacClient:
                         close()
                     wait = RETRY_BACKOFF_BASE * attempt + random.uniform(1, 4)
                     if attempt < MAX_RETRIES:
-                        self._record_retry(
+                        record_http_retry(
+                            source=self.source_name,
+                            max_retries=MAX_RETRIES,
                             url=url,
                             attempt=attempt,
                             wait=wait,
@@ -157,7 +132,9 @@ class AmacClient:
                 last_error = exc
                 wait = RETRY_BACKOFF_BASE * attempt + random.uniform(1, 4)
                 if attempt < MAX_RETRIES:
-                    self._record_retry(
+                    record_http_retry(
+                        source=self.source_name,
+                        max_retries=MAX_RETRIES,
                         url=url,
                         attempt=attempt,
                         wait=wait,
@@ -169,7 +146,9 @@ class AmacClient:
                 last_error = exc
                 wait = RETRY_BACKOFF_BASE * attempt + random.uniform(1, 4)
                 if attempt < MAX_RETRIES:
-                    self._record_retry(
+                    record_http_retry(
+                        source=self.source_name,
+                        max_retries=MAX_RETRIES,
                         url=url,
                         attempt=attempt,
                         wait=wait,
@@ -208,7 +187,9 @@ class AmacClient:
                 last_error = exc
                 wait = RETRY_BACKOFF_BASE * attempt + random.uniform(1, 4)
                 if attempt < MAX_RETRIES:
-                    self._record_retry(
+                    record_http_retry(
+                        source=self.source_name,
+                        max_retries=MAX_RETRIES,
                         url=url,
                         attempt=attempt,
                         wait=wait,

@@ -19,7 +19,7 @@ DEFAULT_BATCH_PAUSE_MIN = 8.0
 DEFAULT_BATCH_PAUSE_MAX = 15.0
 DEFAULT_MAX_RETRIES = 5
 DEFAULT_RETRY_BACKOFF_BASE = 5.0
-DEFAULT_WORKERS = 1
+DEFAULT_WORKERS = 4
 
 
 def _bool_from_env(value: str | None, *, default: bool) -> bool:
@@ -122,14 +122,10 @@ class Settings:
             else config.get("amac_verify_tls")
         )
         delay_min = (
-            _cli_value("--delay-min")
-            or os.environ.get("CSRC_DELAY_MIN")
-            or config.get("delay_min")
+            _cli_value("--delay-min") or os.environ.get("CSRC_DELAY_MIN") or config.get("delay_min")
         )
         delay_max = (
-            _cli_value("--delay-max")
-            or os.environ.get("CSRC_DELAY_MAX")
-            or config.get("delay_max")
+            _cli_value("--delay-max") or os.environ.get("CSRC_DELAY_MAX") or config.get("delay_max")
         )
         batch_size = (
             _cli_value("--batch-size")
@@ -156,15 +152,9 @@ class Settings:
             or os.environ.get("CSRC_RETRY_BACKOFF_BASE")
             or config.get("retry_backoff_base")
         )
-        workers = (
-            _cli_value("--workers")
-            or os.environ.get("CSRC_WORKERS")
-            or config.get("workers")
-        )
+        workers = _cli_value("--workers") or os.environ.get("CSRC_WORKERS") or config.get("workers")
         return cls(
-            output_root=Path(str(output_root)).expanduser()
-            if output_root
-            else DEFAULT_OUTPUT_ROOT,
+            output_root=Path(str(output_root)).expanduser() if output_root else DEFAULT_OUTPUT_ROOT,
             max_download_bytes=_int_from_value(
                 max_download_bytes,
                 default=DEFAULT_MAX_DOWNLOAD_BYTES,

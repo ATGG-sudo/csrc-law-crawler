@@ -92,6 +92,8 @@ def _official_links(links: list[str], registry: dict[str, Any]) -> list[str]:
 
 def _published_at(article: dict[str, Any]) -> str | None:
     raw = article.get("update_time") or article.get("create_time")
+    if raw is None:
+        return None
     try:
         return datetime.fromtimestamp(int(raw), tz=timezone.utc).isoformat()
     except (TypeError, ValueError, OSError):
@@ -206,7 +208,7 @@ def import_wechat_bundle(
         )
         raw_html = archive_dir / aid / "index.html"
         raw_json = archive_dir / JSON_FILE_NAME
-        record = {
+        record: dict[str, Any] = {
             "schema_version": 1,
             "source_record_id": record_id,
             "source_system": "wechat",

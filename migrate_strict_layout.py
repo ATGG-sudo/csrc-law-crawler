@@ -30,6 +30,16 @@ from storage import (
 from runtime import log_event
 
 
+ROOT_LEGACY_NAMES = (
+    "CSRC.zip",
+    "check_canonical.py",
+    ".codebuddy",
+    ".workbuddy",
+    "workbuddy",
+    "workbuddy.zip",
+)
+
+
 def _merge_move(source: Path, target: Path) -> int:
     if not source.exists():
         return 0
@@ -227,19 +237,117 @@ def cleanup_legacy() -> dict[str, Any]:
     return result
 
 
+def audit_root_legacy() -> dict[str, Any]:
+    """Return a read-only inventory of known legacy root entries."""
+    items: list[dict[str, Any]] = []
+    for name in ROOT_LEGACY_NAMES:
+        path = output_dir() / name
+        if not path.exists():
+            continue
+        items.append(
+            {
+                "name": name,
+                "path": str(path),
+                "kind": "directory" if path.is_dir() else "file",
+                "size_bytes": path.stat().st_size if path.is_file() else None,
+            }
+        )
+    return {
+        "schema_version": 1,
+        "audited_at": utc_now_iso(),
+        "mode": "read_only",
+        "output_root": str(output_dir()),
+        "count": len(items),
+        "items": items,
+    }
+
+
+def _require_validated_canonical() -> None:
+    manifest = load_json(canonical_dir() / "manifest.json", {})
+    json_count = len(list((canonical_dir() / "json").glob("law_*.json")))
+    markdown_count = len(list((canonical_dir() / "markdown").glob("*/*.md")))
+    library_count = len(list((canonical_dir() / "library").glob("**/*.md")))
+    if (
+        not (canonical_dir() / "relations" / "graph.json").exists()
+        or not json_count
+        or manifest.get("json_count") != json_count
+        or manifest.get("markdown_count") != markdown_count
+        or manifest.get("library_count") != library_count
+    ):
+        raise RuntimeError("canonical/library 校验未完成，拒绝隔离根目录旧文件")
+
+
+def quarantine_root_legacy(target_root: Path) -> dict[str, Any]:
+    """Move known root legacy entries to an explicit archive; never delete."""
+    _require_validated_canonical()
+    target_root = target_root.resolve()
+    if target_root == output_dir().resolve() or output_dir().resolve() in target_root.parents:
+        raise ValueError("隔离目录必须位于 CSRC 输出根目录之外")
+    inventory = audit_root_legacy()
+    target_root.mkdir(parents=True, exist_ok=True)
+    moved: list[dict[str, Any]] = []
+    for item in inventory["items"]:
+        source = Path(str(item["path"]))
+        target = target_root / source.name
+        if target.exists():
+            raise FileExistsError(f"隔离目标已存在，拒绝覆盖: {target}")
+        shutil.move(str(source), str(target))
+        moved.append({**item, "source": str(source), "target": str(target)})
+    result = {
+        "schema_version": 1,
+        "quarantined_at": utc_now_iso(),
+        "status": "quarantined_without_deletion",
+        "source_root": str(output_dir()),
+        "target_root": str(target_root),
+        "count": len(moved),
+        "items": moved,
+    }
+    save_json(target_root / "migration_manifest.json", result)
+    save_json(reports_dir() / "root_quarantine.json", result)
+    return result
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="迁移严格 raw/work/canonical/reports 布局")
     parser.add_argument("--execute", action="store_true", help="执行迁移")
     parser.add_argument("--cleanup", action="store_true", help="验证后删除旧派生目录")
+    parser.add_argument(
+        "--audit-root",
+        action="store_true",
+        help="只读审计 CSRC 根目录中的已知旧文件",
+    )
+    parser.add_argument(
+        "--quarantine-root",
+        type=Path,
+        help="验证后将根目录旧文件移至明确指定的隔离目录（不删除）",
+    )
     args = parser.parse_args()
-    if not args.execute and not args.cleanup:
-        log_event("cli_message", message="未执行：使用 --execute 迁移，最终使用 --cleanup 清理旧目录")
+    if not any((args.execute, args.cleanup, args.audit_root, args.quarantine_root)):
+        log_event(
+            "cli_message",
+            message=(
+                "未执行：使用 --audit-root 只读审计、--execute 迁移，"
+                "或 --quarantine-root PATH 隔离根目录旧文件"
+            ),
+        )
         return 0
     try:
         if args.execute:
             log_event("cli_result", message=json.dumps(migrate(), ensure_ascii=False))
         if args.cleanup:
             log_event("cli_result", message=json.dumps(cleanup_legacy(), ensure_ascii=False))
+        if args.audit_root:
+            log_event(
+                "cli_result",
+                message=json.dumps(audit_root_legacy(), ensure_ascii=False),
+            )
+        if args.quarantine_root:
+            log_event(
+                "cli_result",
+                message=json.dumps(
+                    quarantine_root_legacy(args.quarantine_root), ensure_ascii=False
+                ),
+            )
     except Exception as exc:
         log_event("cli_error", level="ERROR", message=f"失败: {exc}", error_message=str(exc))
         return 1

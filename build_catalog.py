@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+from collections import Counter, defaultdict
 import json
 import shutil
 import sys
@@ -18,8 +19,20 @@ from csrc_law_crawler.processing.catalog import identity as _catalog_identity
 from csrc_law_crawler.processing.catalog import manifest as _catalog_manifest_helpers
 from csrc_law_crawler.processing.catalog import matching as _catalog_matching
 from csrc_law_crawler.processing.catalog import relations as _catalog_relations
+from csrc_law_crawler.processing.catalog.classification import (
+    enforcement_classification_for,
+    load_classification_overrides,
+    material_classification_for,
+    reference_lifecycle_for,
+    source_web_classification,
+)
 from csrc_law_crawler.sources.registry import load_registry
-from parser import repair_known_neris_mojibake
+from parser import (
+    infer_effective_date,
+    infer_pub_date,
+    ms_to_date,
+    repair_known_neris_mojibake,
+)
 from runtime import log_event
 from storage import (
     attachment_index_path,
@@ -63,6 +76,7 @@ _is_multi_document_announcement_body = _catalog_entities._is_multi_document_anno
 _low_signal_plain_text = _catalog_entities._low_signal_plain_text
 _merge_amac_record = _catalog_entities._merge_amac_record
 _merge_catalog_entity = _catalog_entities._merge_catalog_entity
+_merge_record_metadata = _catalog_entities._merge_record_metadata
 _merge_equivalent_groups = _catalog_entities._merge_equivalent_groups
 _match_amac_records = _catalog_entities._match_amac_records
 _neris_merge_index_key = _catalog_entities._neris_merge_index_key
@@ -115,6 +129,9 @@ choose_neris_match = _catalog_matching.choose_neris_match
 choose_neris_match_with_rule = _catalog_matching.choose_neris_match_with_rule
 infer_known_successor_relations = _catalog_matching.infer_known_successor_relations
 infer_trial_replacement_relations = _catalog_matching.infer_trial_replacement_relations
+infer_draft_finalization_relations = _catalog_matching.infer_draft_finalization_relations
+infer_same_instrument_relations = _catalog_matching.infer_same_instrument_relations
+infer_explicit_successor_relations = _catalog_matching.infer_explicit_successor_relations
 
 # Legacy re-exports from _catalog_relations.
 _add_amac_page_attachment_relations = _catalog_relations._add_amac_page_attachment_relations
@@ -166,21 +183,32 @@ def _neris_records() -> list[dict[str, Any]]:
     for path in iter_reg_law_files():
         doc = load_json(path, {})
         metadata = _repair_text_fields(doc.get("metadata") or {})
+        summary_date_ms = ((doc.get("source") or {}).get("list_summary") or {}).get(
+            "pub_date_ms"
+        )
+        if summary_date_ms is not None:
+            metadata["pub_date"] = ms_to_date(summary_date_ms)
+        plain_text = repair_known_neris_mojibake(doc.get("full_text") or "")
+        metadata["effective_date"] = infer_effective_date(metadata, plain_text)
         record_id = str(metadata.get("id") or path.stem.removeprefix("reg_"))
         attachment_index = load_json(attachment_index_path(record_id), {})
-        records.append(
-            {
-                "system": "neris",
-                "record_id": record_id,
-                "metadata": metadata,
-                "plain_text": repair_known_neris_mojibake(doc.get("full_text") or ""),
-                "local_file": relative_to_output(path),
-                "page_url": (doc.get("source") or {}).get("detail_url"),
-                "assets": (
-                    attachment_index.get("attachments") or doc.get("source_attachments") or []
-                ),
-            }
+        record = {
+            "system": "neris",
+            "record_id": record_id,
+            "metadata": metadata,
+            "plain_text": plain_text,
+            "local_file": relative_to_output(path),
+            "page_url": (doc.get("source") or {}).get("detail_url"),
+            "assets": (attachment_index.get("attachments") or doc.get("source_attachments") or []),
+        }
+        record.update(
+            source_web_classification(
+                metadata,
+                page_url=record.get("page_url"),
+                material_lane="rule",
+            )
         )
+        records.append(record)
     return records
 
 
@@ -189,28 +217,40 @@ def _amac_records() -> list[dict[str, Any]]:
     for path in iter_amac_source_files():
         doc = load_json(path, {})
         record_id = str(doc.get("source_record_id") or path.stem)
-        records.append(
-            {
-                "system": "amac",
-                "record_id": record_id,
-                "metadata": _repair_text_fields(doc.get("metadata") or {}),
-                "local_file": relative_to_output(path),
-                "page_url": (doc.get("source") or {}).get("page_url"),
-                "assets": doc.get("assets") or [],
-                "parent_record_id": None,
-            }
+        record = {
+            "system": "amac",
+            "record_id": record_id,
+            "metadata": _repair_text_fields(doc.get("metadata") or {}),
+            "local_file": relative_to_output(path),
+            "page_url": (doc.get("source") or {}).get("page_url"),
+            "assets": doc.get("assets") or [],
+            "parent_record_id": None,
+        }
+        record["metadata"]["pub_date"] = infer_pub_date(
+            record["metadata"], record.get("page_url")
         )
+        record.update(
+            source_web_classification(
+                record["metadata"],
+                page_url=record.get("page_url"),
+                material_lane=str(doc.get("material_lane") or "") or None,
+            )
+        )
+        records.append(record)
         records[-1]["plain_text"] = _record_plain_text(
             records[-1]["metadata"],
             (doc.get("content") or {}).get("plain_text"),
             records[-1]["local_file"],
+        )
+        records[-1]["metadata"]["effective_date"] = infer_effective_date(
+            records[-1]["metadata"], records[-1]["plain_text"]
         )
         for attachment in doc.get("attachment_documents") or []:
             attachment_id = str(attachment.get("source_record_id") or "")
             if not attachment_id:
                 continue
             attachment_metadata = _repair_text_fields(dict(attachment.get("metadata") or {}))
-            parent_metadata = _repair_text_fields(doc.get("metadata") or {})
+            parent_metadata = dict(records[-1]["metadata"])
             if attachment_metadata.get("status") in {None, "", "unknown"}:
                 parent_status = parent_metadata.get("status")
                 if parent_status not in {None, "", "unknown"}:
@@ -226,39 +266,52 @@ def _amac_records() -> list[dict[str, Any]]:
                 ),
                 None,
             )
-            records.append(
-                {
-                    "system": "amac",
-                    "record_id": attachment_id,
-                    "metadata": attachment_metadata,
-                    "plain_text": _record_plain_text(
-                        attachment_metadata,
-                        (attachment.get("content") or {}).get("plain_text"),
-                        local_file,
-                    ),
-                    "local_file": local_file,
-                    "page_url": (attachment.get("source") or {}).get("asset_url"),
-                    "assets": [],
-                    "parent_record_id": record_id,
-                }
+            attachment_record = {
+                "system": "amac",
+                "record_id": attachment_id,
+                "metadata": attachment_metadata,
+                "plain_text": _record_plain_text(
+                    attachment_metadata,
+                    (attachment.get("content") or {}).get("plain_text"),
+                    local_file,
+                ),
+                "local_file": local_file,
+                "page_url": (attachment.get("source") or {}).get("asset_url"),
+                "assets": [],
+                "parent_record_id": record_id,
+            }
+            attachment_record.update(
+                source_web_classification(
+                    attachment_metadata,
+                    page_url=attachment_record.get("page_url"),
+                    material_lane=str(doc.get("material_lane") or "") or None,
+                )
             )
+            records.append(attachment_record)
     return records
 
 
-def _multi_source_rule_records() -> list[dict[str, Any]]:
-    """Load only publishable rule records from the multi-source evidence store."""
+def _multi_source_catalog_records() -> list[dict[str, Any]]:
+    """Load publishable rule and reference records from the evidence store."""
     root = output_path("raw/sources/records")
     records: list[dict[str, Any]] = []
     if not root.exists():
         return records
+    registry_endpoints = {
+        endpoint["endpoint_id"]: endpoint for endpoint in load_registry()["endpoints"]
+    }
     restricted_endpoints = {
         endpoint["endpoint_id"]
-        for endpoint in load_registry()["endpoints"]
+        for endpoint in registry_endpoints.values()
         if endpoint["scope_mode"] in {"catalog_filter", "query_exhaustive"}
     }
     for path in sorted(root.glob("*/*.json")):
         doc = load_json(path, {})
-        if doc.get("ingest_status") != "complete" or doc.get("material_lane") != "rule":
+        material_lane = str(doc.get("material_lane") or "")
+        if doc.get("ingest_status") != "complete" or material_lane not in {
+            "rule",
+            "reference",
+        }:
             continue
         content = doc.get("content") or {}
         plain_text = repair_known_neris_mojibake(str(content.get("plain_text") or ""))
@@ -270,18 +323,75 @@ def _multi_source_rule_records() -> list[dict[str, Any]]:
             and source.get("scope_status") != "matched"
         ):
             continue
-        records.append(
+        endpoint = registry_endpoints.get(str(source.get("endpoint_id") or "")) or {}
+        profiles = endpoint.get("profiles") or []
+        metadata = _repair_text_fields(doc.get("metadata") or {})
+        metadata["pub_date"] = infer_pub_date(metadata, source.get("page_url"))
+        metadata["effective_date"] = infer_effective_date(metadata, plain_text)
+        native_source_category = metadata.get("source_category")
+        metadata.setdefault("material_lane", material_lane)
+        metadata.setdefault("source_endpoint_id", source.get("endpoint_id"))
+        metadata.setdefault(
+            "source_category",
+            next(
+                (
+                    profile.get("material_nature")
+                    for profile in profiles
+                    if profile.get("material_nature")
+                ),
+                metadata.get("document_type"),
+            ),
+        )
+        if not native_source_category and metadata.get("source_category"):
+            metadata.setdefault("source_category_provenance", "endpoint_profile")
+        source_sections = sorted(
             {
-                "system": str(doc.get("source_system") or path.parent.name),
-                "record_id": str(doc.get("source_record_id") or path.stem),
-                "metadata": _repair_text_fields(doc.get("metadata") or {}),
-                "plain_text": plain_text,
-                "local_file": relative_to_output(path),
-                "page_url": source.get("page_url"),
-                "assets": doc.get("assets") or [],
+                str(item.get("list_url"))
+                for item in source.get("discovery_evidence") or []
+                if item.get("list_url")
             }
         )
+        if source_sections:
+            metadata.setdefault("source_section", source_sections[0])
+            metadata.setdefault("source_sections", source_sections)
+        source_types = sorted(
+            {
+                str(profile.get("effect") or profile.get("material_nature"))
+                for profile in profiles
+                if profile.get("effect") or profile.get("material_nature")
+            }
+        )
+        if source_types:
+            metadata.setdefault("source_types", source_types)
+        record = {
+            "system": str(doc.get("source_system") or path.parent.name),
+            "record_id": str(doc.get("source_record_id") or path.stem),
+            "metadata": metadata,
+            "plain_text": plain_text,
+            "local_file": relative_to_output(path),
+            "page_url": source.get("page_url"),
+            "assets": doc.get("assets") or [],
+            "material_lane": material_lane,
+        }
+        record.update(
+            source_web_classification(
+                metadata,
+                page_url=record.get("page_url"),
+                material_lane=material_lane,
+                endpoint_profiles=profiles,
+            )
+        )
+        records.append(record)
     return records
+
+
+def _multi_source_rule_records() -> list[dict[str, Any]]:
+    """Compatibility helper retained for callers that only consume rules."""
+    return [
+        record
+        for record in _multi_source_catalog_records()
+        if record.get("material_lane") == "rule"
+    ]
 
 
 def _merge_multi_source_rules(
@@ -292,15 +402,20 @@ def _merge_multi_source_rules(
     """Merge exact official duplicates; otherwise keep a source-owned entity."""
     for record in records:
         metadata = record.get("metadata") or {}
-        title_key = normalize_title(metadata.get("name"))
-        fileno_key = normalize_fileno(metadata.get("fileno"))
+        title_keys = _catalog_identity.instrument_title_keys(metadata.get("name"))
+        fileno_keys = _catalog_identity.fileno_keys(metadata.get("fileno"))
         candidates: list[tuple[str, dict[str, Any]]] = []
         for entity_id, entity in entities.items():
             entity_metadata = entity.get("metadata") or {}
-            if normalize_title(entity_metadata.get("name") or entity.get("title")) != title_key:
+            entity_title_keys = _catalog_identity.instrument_title_keys(
+                entity_metadata.get("name") or entity.get("title")
+            )
+            if not title_keys.intersection(entity_title_keys):
                 continue
-            entity_fileno = normalize_fileno(entity_metadata.get("fileno"))
-            if fileno_key and entity_fileno and fileno_key != entity_fileno:
+            entity_fileno_keys = _catalog_identity.fileno_keys(entity_metadata.get("fileno"))
+            if fileno_keys and entity_fileno_keys and not fileno_keys.intersection(
+                entity_fileno_keys
+            ):
                 continue
             left_date = metadata.get("pub_date")
             right_date = entity_metadata.get("pub_date")
@@ -308,11 +423,25 @@ def _merge_multi_source_rules(
                 continue
             candidates.append((entity_id, entity))
 
-        if title_key and len(candidates) == 1:
+        if fileno_keys:
+            numbered_candidates = [
+                (entity_id, entity)
+                for entity_id, entity in candidates
+                if fileno_keys.intersection(
+                    _catalog_identity.fileno_keys(
+                        (entity.get("metadata") or {}).get("fileno")
+                    )
+                )
+            ]
+            if numbered_candidates:
+                candidates = numbered_candidates
+
+        if title_keys and len(candidates) == 1:
             entity_id, entity = candidates[0]
             _append_record_source(entity, record, role="official_duplicate")
             _append_record_assets(entity, record)
             _prefer_longer_record_content(entity, record)
+            _merge_record_metadata(entity, record)
         else:
             entity_id = canonical_id(f"{record['system']}:{record['record_id']}")
             entities[entity_id] = _entity_from_record(record, entity_id)
@@ -323,7 +452,7 @@ def build_catalog(*, clean: bool = True) -> dict[str, Any]:
     source_records = CatalogSourceLoader(_neris_records, _amac_records).load()
     neris_records = source_records.neris
     amac_records = source_records.amac
-    multi_source_rule_records = _multi_source_rule_records()
+    multi_source_records = _multi_source_catalog_records()
     if clean and catalog_laws_dir().exists():
         shutil.rmtree(catalog_laws_dir())
     catalog_laws_dir().mkdir(parents=True, exist_ok=True)
@@ -332,7 +461,7 @@ def build_catalog(*, clean: bool = True) -> dict[str, Any]:
     entities, source_to_entity, title_index = _seed_neris_entities(neris_records)
     matcher = CatalogMatcher(title_index, choose_neris_match_with_rule)
     matches = _match_amac_records(amac_records, matcher, entities, source_to_entity)
-    _merge_multi_source_rules(multi_source_rule_records, entities, source_to_entity)
+    _merge_multi_source_rules(multi_source_records, entities, source_to_entity)
     dedupe_result = deduplicate_catalog_entities(entities, source_to_entity, matches)
     relations = _build_catalog_relations(
         neris_records=neris_records,
@@ -340,6 +469,42 @@ def build_catalog(*, clean: bool = True) -> dict[str, Any]:
         entities=entities,
         source_to_entity=source_to_entity,
     )
+    publishes_by_entity: dict[str, list[str]] = defaultdict(list)
+    finalized_by_entity: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    for relation in relations:
+        if relation.get("relation") == "publishes":
+            publishes_by_entity[str(relation.get("from"))].append(str(relation.get("to")))
+        if relation.get("relation") == "finalizes_draft":
+            finalized_by_entity[str(relation.get("to"))].append(
+                {
+                    "canonical_id": relation.get("from"),
+                    "source": relation.get("source"),
+                    "confidence": relation.get("confidence"),
+                    "evidence": relation.get("evidence") or {},
+                }
+            )
+    overrides = load_classification_overrides()
+    missing_override_ids = sorted(set(overrides) - set(entities))
+    if missing_override_ids:
+        raise ValueError(
+            "classification overrides reference missing canonical IDs: "
+            + ", ".join(missing_override_ids)
+        )
+    for entity_id, entity in entities.items():
+        material = material_classification_for(
+            entity,
+            publishes=publishes_by_entity.get(entity_id),
+            override=overrides.get(entity_id),
+        )
+        entity["material_classification"] = material
+        entity["enforcement_classification"] = enforcement_classification_for(
+            entity, material_classification=material
+        )
+        entity["reference_lifecycle"] = reference_lifecycle_for(
+            entity,
+            material_classification=material,
+            finalized_by=finalized_by_entity.get(entity_id),
+        )
     review_items = _review_queue_items(
         amac_records,
         source_to_entity=source_to_entity,
@@ -353,7 +518,17 @@ def build_catalog(*, clean: bool = True) -> dict[str, Any]:
         review_items=review_items,
         matches=matches,
     )
-    manifest["multi_source_rule_records"] = len(multi_source_rule_records)
+    multi_source_counts = Counter(
+        str(record.get("material_lane")) for record in multi_source_records
+    )
+    material_counts = Counter(
+        str((entity.get("material_classification") or {}).get("lane"))
+        for entity in entities.values()
+    )
+    manifest["multi_source_catalog_records"] = len(multi_source_records)
+    manifest["multi_source_rule_records"] = multi_source_counts.get("rule", 0)
+    manifest["multi_source_reference_records"] = multi_source_counts.get("reference", 0)
+    manifest["material_lane_counts"] = dict(sorted(material_counts.items()))
 
     writer.write_entities(catalog_laws_dir(), entities)
     writer.write_source_matches(source_matches_path(), source_to_entity, matches)

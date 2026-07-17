@@ -1,0 +1,365 @@
+{
+  "schema_version": 1,
+  "items": [
+    {
+      "canonical_id": "law_02fc63b05e1a5f71f6394cc6",
+      "material_lane": "rule",
+      "material_category": "law_regulation",
+      "effectiveness": "historical",
+      "verified_at": "2026-07-15",
+      "evidence_url": "https://neris.csrc.gov.cn/falvfagui/rdqsHeader/mainbody?navbarId=1&secFutrsLawId=d386066dd6d947349513d8b47dfe969d",
+      "note": "正文为第198号令完整制度，2025年修正版已替代该版本。"
+    },
+    {
+      "canonical_id": "law_067a6d7321501f590cd4b170",
+      "material_lane": "rule",
+      "material_category": "law_regulation",
+      "effectiveness": "current",
+      "verified_at": "2026-07-15",
+      "evidence_url": "https://neris.csrc.gov.cn/falvfagui/rdqsHeader/mainbody?navbarId=1&secFutrsLawId=e78f3bce45094b8d83ad379ca31d970a",
+      "note": "NERIS列为现行正式规定，标题中的研究报告是监管对象而非行业研究材料。"
+    },
+    {
+      "canonical_id": "law_074abe429c0d289801db178a",
+      "material_lane": "rule",
+      "material_category": "law_regulation",
+      "effectiveness": "historical",
+      "verified_at": "2026-07-15",
+      "evidence_url": "https://xzfg.moj.gov.cn/SearchTitleFront?QueryAll=%E8%AF%81%E5%88%B8%E5%85%AC%E5%8F%B8%E7%9B%91%E7%9D%A3%E7%AE%A1%E7%90%86%E6%9D%A1%E4%BE%8BZVING1",
+      "note": "正文为行政法规完整条文；该2014版本已被后续修订版本替代。"
+    },
+    {
+      "canonical_id": "law_24ac7e4b797e17cebfb496c1",
+      "material_lane": "rule",
+      "material_category": "law_regulation",
+      "effectiveness": "current",
+      "verified_at": "2026-07-15",
+      "evidence_url": "https://www.npc.gov.cn/zgrdw/npc/xinwen/2018-12/29/content_2069931.htm",
+      "note": "全国人大常委会公布的法律完整正文，不因AMAC作为相关材料收录而改变制度性质。"
+    },
+    {
+      "canonical_id": "law_2504a4cc0c8997504ef1abc8",
+      "material_lane": "rule",
+      "material_category": "law_regulation",
+      "effectiveness": "current",
+      "verified_at": "2026-07-15",
+      "evidence_url": "https://www.beijing.gov.cn/zhengce/zhengcefagui/202001/t20200106_1556996.html",
+      "note": "国务院行政法规完整正文，官方页面标示有效。"
+    },
+    {
+      "canonical_id": "law_283b6a83ddd10d99afe74383",
+      "material_lane": "rule",
+      "material_category": "business_rule",
+      "effectiveness": "historical",
+      "verified_at": "2026-07-15",
+      "evidence_url": "https://neris.csrc.gov.cn/falvfagui/rdqsHeader/mainbody?navbarId=1&secFutrsLawId=fdf7afe6d47b4b0ab3200e3e7b19bd17",
+      "note": "交易所业务指引具有反复适用条款，后续规范运作指引明确废止该文件。"
+    },
+    {
+      "canonical_id": "law_29aa48b24eb5a70b89dedfab",
+      "material_lane": "rule",
+      "material_category": "normative_document",
+      "effectiveness": "current",
+      "verified_at": "2026-07-15",
+      "evidence_url": "https://www.amac.org.cn/hydj/djyl/202507/t20250708_26801.html",
+      "note": "页面转载的是中共中央、国务院正式条例完整正文，条例明确自发布之日起施行。"
+    },
+    {
+      "canonical_id": "law_349fd7faac9ba57a5f3b624e",
+      "material_lane": "rule",
+      "material_category": "self_regulatory_rule",
+      "effectiveness": "unknown",
+      "verified_at": "2026-07-15",
+      "evidence_url": "https://fg.amac.org.cn/governmentrules_3854/zcgz_zlgz/zlgz_cyry/zlgz_cyry_xwgf/201912/t20191222_24377.html",
+      "note": "正文持续规定基金销售人员职业义务，属于自律制度；未取得充分现行状态证据。"
+    },
+    {
+      "canonical_id": "law_3519b6b49db6ab006fabcf19",
+      "material_lane": "rule",
+      "material_category": "self_regulatory_rule",
+      "effectiveness": "historical",
+      "verified_at": "2026-07-15",
+      "evidence_url": "https://neris.csrc.gov.cn/falvfagui/rdqsHeader/mainbody?navbarId=1&secFutrsLawId=61b5a5da4e4a43a4a8631e0190a68a22",
+      "note": "完整自律管理规范，已被2024年修订版替代。"
+    },
+    {
+      "canonical_id": "law_37e1069af79aa7835f508740",
+      "material_lane": "rule",
+      "material_category": "normative_document",
+      "effectiveness": "historical",
+      "verified_at": "2026-07-15",
+      "evidence_url": "https://neris.csrc.gov.cn/falvfagui/rdqsHeader/mainbody?navbarId=1&secFutrsLawId=045e665c15db4948ac2b049931457a9f",
+      "note": "完整规范性指导意见，2020年后续规定明确将其废止。"
+    },
+    {
+      "canonical_id": "law_4e19d28e84622960ea7ff1a3",
+      "material_lane": "rule",
+      "material_category": "self_regulatory_rule",
+      "effectiveness": "historical",
+      "verified_at": "2026-07-15",
+      "evidence_url": "https://neris.csrc.gov.cn/falvfagui/rdqsHeader/mainbody?navbarId=1&secFutrsLawId=8a93dfd4c88741bea7d7b5a9593e9d74",
+      "note": "NERIS中的自律培训规则，原始状态为已被修改。"
+    },
+    {
+      "canonical_id": "law_58697b667e635fe02b140239",
+      "material_lane": "rule",
+      "material_category": "law_regulation",
+      "effectiveness": "current",
+      "verified_at": "2026-07-15",
+      "evidence_url": "https://www.csrc.gov.cn/csrc/c101799/c1003781/content.shtml",
+      "note": "证监会第60号令完整正文，自2009年3月1日起施行，不是统计研究材料。"
+    },
+    {
+      "canonical_id": "law_59fd0cfc3f8fb40af31f910d",
+      "material_lane": "rule",
+      "material_category": "self_regulatory_rule",
+      "effectiveness": "historical",
+      "verified_at": "2026-07-15",
+      "evidence_url": "https://neris.csrc.gov.cn/falvfagui/rdqsHeader/mainbody?navbarId=1&secFutrsLawId=37d461bedd494694bece9fa1a4e36e13",
+      "note": "完整自律管理规范，已被2024年修订版替代。"
+    },
+    {
+      "canonical_id": "law_7ee50acdbb071a90abc425a5",
+      "material_lane": "rule",
+      "material_category": "self_regulatory_rule",
+      "effectiveness": "current",
+      "verified_at": "2026-07-15",
+      "evidence_url": "https://www.amac.org.cn/xwfb/tzgg/202601/t20260116_27204.html",
+      "note": "正式自律规则附件，自2026年1月16日起施行。"
+    },
+    {
+      "canonical_id": "law_7f78a7297c10bb94fd545995",
+      "material_lane": "rule",
+      "material_category": "self_regulatory_rule",
+      "effectiveness": "pending",
+      "verified_at": "2026-07-15",
+      "evidence_url": "https://fg.amac.org.cn/governmentrules_3854/zcgz_zlgz/zlgz_gmjj/zlgz_gmjj_tzjy/202606/t20260615_27830.html",
+      "note": "正式自律规则正文第二十七条规定自2026年12月1日起施行。"
+    },
+    {
+      "canonical_id": "law_9515c5745e60acf3cc4b7a03",
+      "material_lane": "rule",
+      "material_category": "self_regulatory_rule",
+      "effectiveness": "current",
+      "verified_at": "2026-07-15",
+      "evidence_url": "https://fg.amac.org.cn/governmentrules_3854/zcgz_zlgz/zlgz_gmjj/zlgz_gmjj_zhl/202309/t20230904_24286.html",
+      "note": "官方制度页标示现行有效；试行名称不改变其制度性质。"
+    },
+    {
+      "canonical_id": "law_95dd8d5db99e4a1baed442f9",
+      "material_lane": "rule",
+      "material_category": "business_rule",
+      "effectiveness": "unknown",
+      "verified_at": "2026-07-15",
+      "evidence_url": "https://fg.amac.org.cn/governmentrules_3854/zcgz_gfxwj/gfxwj_zcgl/202003/t20200313_24694.html",
+      "note": "证监会发布的金融行业编码及管理规范，属于反复适用业务标准；效力状态待核验。"
+    },
+    {
+      "canonical_id": "law_99042d6e94c5d28bae4f0609",
+      "material_lane": "rule",
+      "material_category": "self_regulatory_rule",
+      "effectiveness": "current",
+      "verified_at": "2026-07-15",
+      "evidence_url": "https://www.amac.org.cn/xwfb/tzgg/201911/t20191115_18332.html",
+      "note": "协会正式发布并实施，且2026年仍在后续业务通知中实际引用。"
+    },
+    {
+      "canonical_id": "law_522b0b04e72c0d3a93f9dc21",
+      "material_lane": "rule",
+      "material_category": "law_regulation",
+      "effectiveness": "current",
+      "verified_at": "2026-07-15",
+      "evidence_url": "https://neris.csrc.gov.cn/falvfagui/rdqsHeader/mainbody?navbarId=3&secFutrsLawId=931c9b030c2943c997760151c22b0c93",
+      "note": "正文为第203号令完整规章，官方法规库标示现行。"
+    },
+    {
+      "canonical_id": "law_ca302c72f9f0fbe1bdb7ba44",
+      "material_lane": "rule",
+      "material_category": "self_regulatory_rule",
+      "effectiveness": "current",
+      "verified_at": "2026-07-15",
+      "evidence_url": "https://neris.csrc.gov.cn/falvfagui/rdqsHeader/mainbody?navbarId=1&secFutrsLawId=d73663eca58b4c259946821dbd9565ac",
+      "note": "NERIS列为现行自律指引，研究报告是监管对象而非行业研究材料。"
+    },
+    {
+      "canonical_id": "law_caad9258ec6b58920af3c128",
+      "material_lane": "rule",
+      "material_category": "self_regulatory_rule",
+      "effectiveness": "current",
+      "verified_at": "2026-07-15",
+      "evidence_url": "https://neris.csrc.gov.cn/falvfagui/rdqsHeader/mainbody?navbarId=1&secFutrsLawId=d39327bd4258457ab19ff33dd5d6b013",
+      "note": "NERIS列为现行正式细则，培训关键词不应将制度降为模板指导。"
+    },
+    {
+      "canonical_id": "law_cb1585658d078c48a3e33708",
+      "material_lane": "rule",
+      "material_category": "law_regulation",
+      "effectiveness": "historical",
+      "verified_at": "2026-07-15",
+      "evidence_url": "https://flk.npc.gov.cn/detail?fileId=&id=ff8081819cf9f588019d0933d6a259ef&title=%E7%A4%BE%E4%BC%9A%E5%9B%A2%E4%BD%93%E7%99%BB%E8%AE%B0%E7%AE%A1%E7%90%86%E6%9D%A1%E4%BE%8B&type=",
+      "note": "行政法规完整正文；该2016版本已被2026年修订版替代。"
+    },
+    {
+      "canonical_id": "law_e4ece2ca40e4465c7c1d64b8",
+      "material_lane": "rule",
+      "material_category": "law_regulation",
+      "effectiveness": "current",
+      "verified_at": "2026-07-15",
+      "evidence_url": "https://www.ssf.gov.cn/portal/zcfg/zcfg/webinfo/2021/12/1640743468892417.htm",
+      "note": "国务院行政法规完整正文，自2016年5月1日起施行。"
+    },
+    {
+      "canonical_id": "law_ee720ae9d35d18f65797a8f9",
+      "material_lane": "rule",
+      "material_category": "law_regulation",
+      "effectiveness": "historical",
+      "verified_at": "2026-07-15",
+      "evidence_url": "https://xzfg.moj.gov.cn/SearchTitleFront?QueryAll=%E8%AF%81%E5%88%B8%E5%85%AC%E5%8F%B8%E9%A3%8E%E9%99%A9%E5%A4%84%E7%BD%AE%E6%9D%A1%E4%BE%8BZVING1",
+      "note": "行政法规完整正文；该旧版本已被2023年修改后的现行版本替代。"
+    },
+    {
+      "canonical_id": "law_0bf0e8dc77c7ac839003ff10",
+      "material_lane": "reference",
+      "material_category": "interpretation_qa",
+      "effectiveness": "not_applicable",
+      "verified_at": "2026-07-15",
+      "evidence_url": "https://neris.csrc.gov.cn/falvfagui/rdqsHeader/mainbody?navbarId=1&secFutrsLawId=745777672748223321",
+      "note": "发布对象为监管问答，按解释问答材料管理。"
+    },
+    {
+      "canonical_id": "law_2b7c31504a5dee0fc3ceb3d2",
+      "material_lane": "reference",
+      "material_category": "interpretation_qa",
+      "effectiveness": "not_applicable",
+      "verified_at": "2026-07-15",
+      "evidence_url": "https://neris.csrc.gov.cn/falvfagui/rdqsHeader/mainbody?navbarId=1&secFutrsLawId=38c965e4da5c4372ac62d02868256d94",
+      "note": "发布对象为审核问答，按解释问答材料管理。"
+    },
+    {
+      "canonical_id": "law_30f8c2e319d5e88ffbc7d7e2",
+      "material_lane": "reference",
+      "material_category": "interpretation_qa",
+      "effectiveness": "not_applicable",
+      "verified_at": "2026-07-15",
+      "evidence_url": "https://neris.csrc.gov.cn/falvfagui/rdqsHeader/mainbody?navbarId=1&secFutrsLawId=4cbb14a8dd2344feaedd00c475e78eac",
+      "note": "标题和正文均为登记备案问答汇总，不是独立制度正文。"
+    },
+    {
+      "canonical_id": "law_41fa999bc7883592d5bab0ea",
+      "material_lane": "reference",
+      "material_category": "interpretation_qa",
+      "effectiveness": "not_applicable",
+      "verified_at": "2026-07-15",
+      "evidence_url": "https://neris.csrc.gov.cn/falvfagui/rdqsHeader/mainbody?navbarId=1&secFutrsLawId=2b0d383a36a64022973a3f0836e21897",
+      "note": "发布对象为审核问答，按解释问答材料管理。"
+    },
+    {
+      "canonical_id": "law_432e3e6d137498f1f2b51af9",
+      "material_lane": "reference",
+      "material_category": "interpretation_qa",
+      "effectiveness": "not_applicable",
+      "verified_at": "2026-07-15",
+      "evidence_url": "https://neris.csrc.gov.cn/falvfagui/rdqsHeader/mainbody?navbarId=1&secFutrsLawId=57c8c442205a4b588c90497d54237acd",
+      "note": "监管问答属于解释参考材料，不单独标制度效力。"
+    },
+    {
+      "canonical_id": "law_44eebd81d29aa77f82a6c2bb",
+      "material_lane": "reference",
+      "material_category": "interpretation_qa",
+      "effectiveness": "not_applicable",
+      "verified_at": "2026-07-15",
+      "evidence_url": "https://neris.csrc.gov.cn/falvfagui/rdqsHeader/mainbody?navbarId=1&secFutrsLawId=8a5b7f6a7b784a5f900d48e6dd4184f8",
+      "note": "发布对象为审核问答，按解释问答材料管理。"
+    },
+    {
+      "canonical_id": "law_48e43619a78b2413ed7ea1c7",
+      "material_lane": "reference",
+      "material_category": "interpretation_qa",
+      "effectiveness": "not_applicable",
+      "verified_at": "2026-07-15",
+      "evidence_url": "https://neris.csrc.gov.cn/falvfagui/rdqsHeader/mainbody?navbarId=1&secFutrsLawId=746412002802679221",
+      "note": "监管问答属于解释参考材料，不单独标制度效力。"
+    },
+    {
+      "canonical_id": "law_498d140b87bc855d40a3ce34",
+      "material_lane": "reference",
+      "material_category": "interpretation_qa",
+      "effectiveness": "not_applicable",
+      "verified_at": "2026-07-15",
+      "evidence_url": "https://neris.csrc.gov.cn/falvfagui/rdqsHeader/mainbody?navbarId=1&secFutrsLawId=746412002802698146",
+      "note": "投资者问答属于解释参考材料，不单独标制度效力。"
+    },
+    {
+      "canonical_id": "law_4b6020af9a30282c37df66ef",
+      "material_lane": "reference",
+      "material_category": "interpretation_qa",
+      "effectiveness": "not_applicable",
+      "verified_at": "2026-07-15",
+      "evidence_url": "https://neris.csrc.gov.cn/falvfagui/rdqsHeader/mainbody?navbarId=1&secFutrsLawId=01c4c59e22e1498ea59dcb92a84c7a77",
+      "note": "发布对象为审核问答，按解释问答材料管理。"
+    },
+    {
+      "canonical_id": "law_5eb51607d5c06a6f5f1f82ed",
+      "material_lane": "reference",
+      "material_category": "interpretation_qa",
+      "effectiveness": "not_applicable",
+      "verified_at": "2026-07-15",
+      "evidence_url": "https://neris.csrc.gov.cn/falvfagui/rdqsHeader/mainbody?navbarId=1&secFutrsLawId=745777672752260126",
+      "note": "文件是对既有细则的问答，不是细则本身。"
+    },
+    {
+      "canonical_id": "law_aa3f9ef0f936c2fb1bb0a707",
+      "material_lane": "reference",
+      "material_category": "interpretation_qa",
+      "effectiveness": "not_applicable",
+      "verified_at": "2026-07-15",
+      "evidence_url": "https://neris.csrc.gov.cn/falvfagui/rdqsHeader/mainbody?navbarId=1&secFutrsLawId=85dedc6912ee4f78a0d1200c6ea911b4",
+      "note": "发布对象为审核问答，按解释问答材料管理。"
+    },
+    {
+      "canonical_id": "law_aa87b0f9977853a4bc975a68",
+      "material_lane": "reference",
+      "material_category": "interpretation_qa",
+      "effectiveness": "not_applicable",
+      "verified_at": "2026-07-15",
+      "evidence_url": "https://neris.csrc.gov.cn/falvfagui/rdqsHeader/mainbody?navbarId=1&secFutrsLawId=c93d805b3426469192d7edb0011bfeed",
+      "note": "监管问答属于解释参考材料，不单独标制度效力。"
+    },
+    {
+      "canonical_id": "law_becc8e871b708e4b0576e91d",
+      "material_lane": "reference",
+      "material_category": "interpretation_qa",
+      "effectiveness": "not_applicable",
+      "verified_at": "2026-07-15",
+      "evidence_url": "https://neris.csrc.gov.cn/falvfagui/rdqsHeader/mainbody?navbarId=1&secFutrsLawId=e10e309d7fbc424b96cb81c6e5e09173",
+      "note": "发布对象为审核问答，按解释问答材料管理。"
+    },
+    {
+      "canonical_id": "law_e3838eb0fca9a98cacac0fb0",
+      "material_lane": "reference",
+      "material_category": "interpretation_qa",
+      "effectiveness": "not_applicable",
+      "verified_at": "2026-07-15",
+      "evidence_url": "https://neris.csrc.gov.cn/falvfagui/rdqsHeader/mainbody?navbarId=1&secFutrsLawId=746126805384638671",
+      "note": "投资者问答属于解释参考材料，不单独标制度效力。"
+    },
+    {
+      "canonical_id": "law_6b082e4ce08248b155df3d6a",
+      "material_lane": "rule",
+      "material_category": "self_regulatory_rule",
+      "effectiveness": "historical",
+      "verified_at": "2026-07-16",
+      "evidence_url": "https://www.amac.org.cn/xwfb/tzgg/202510/t20251024_26990.html",
+      "note": "协会公告明确原备案指引第3号已经修订，并自2025年10月24日公布之日起施行修订版。"
+    },
+    {
+      "canonical_id": "law_f8194c71817b4463d82a528d",
+      "material_lane": "rule",
+      "material_category": "self_regulatory_rule",
+      "effectiveness": "current",
+      "verified_at": "2026-07-16",
+      "evidence_url": "https://www.amac.org.cn/xwfb/tzgg/202510/t20251024_26990.html",
+      "note": "协会公告明确2025年修订版经审议公布，并自公布之日起施行。"
+    }
+  ]
+}

@@ -2,14 +2,28 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import date, datetime
+import re
 from typing import Any
+from zoneinfo import ZoneInfo
 
 
 KNOWN_NERIS_MOJIBAKE = {
     "\ufffd0\ufffd2": "",
     "\ufffd6\ufffd1": "·",
 }
+
+EXPLICIT_EFFECTIVE_DATE_RE = re.compile(
+    r"自\s*(\d{4})\s*年\s*(\d{1,2})\s*月\s*(\d{1,2})\s*日\s*起\s*(?:施行|实施)"
+)
+PUBLISH_DATE_EFFECTIVE_PATTERNS = (
+    "自发布之日起施行",
+    "自发布之日起实施",
+    "自公布之日起施行",
+    "自公布之日起实施",
+    "自印发之日起施行",
+    "自印发之日起实施",
+)
 
 
 def repair_known_neris_mojibake(text: str) -> str:
@@ -33,7 +47,63 @@ def _clean_source_field(value: Any) -> Any:
 def ms_to_date(ms: int | None) -> str | None:
     if ms is None:
         return None
-    return datetime.fromtimestamp(ms / 1000, tz=timezone.utc).strftime("%Y-%m-%d")
+    return datetime.fromtimestamp(ms / 1000, tz=ZoneInfo("Asia/Shanghai")).strftime(
+        "%Y-%m-%d"
+    )
+
+
+def infer_effective_date(metadata: dict[str, Any], text: str) -> str | None:
+    """Prefer an explicit commencement clause over lossy source metadata."""
+    compact = re.sub(r"\s+", "", text)
+    existing_text = str(metadata.get("effective_date") or "").strip()[:10]
+    try:
+        existing = date.fromisoformat(existing_text)
+    except ValueError:
+        existing = None
+    for match in reversed(list(EXPLICIT_EFFECTIVE_DATE_RE.finditer(compact))):
+        try:
+            inferred = date(*(int(value) for value in match.groups()))
+        except ValueError:
+            continue
+        if existing and abs((inferred - existing).days) > 3:
+            return existing.isoformat()
+        return inferred.isoformat()
+    if any(pattern in compact for pattern in PUBLISH_DATE_EFFECTIVE_PATTERNS):
+        version = str(metadata.get("version") or "")
+        if len(version) == 8 and version.isdigit():
+            try:
+                inferred = date(int(version[:4]), int(version[4:6]), int(version[6:]))
+                if existing and abs((inferred - existing).days) > 3:
+                    return existing.isoformat()
+                return inferred.isoformat()
+            except ValueError:
+                pass
+        published = str(metadata.get("pub_date") or "")[:10]
+        try:
+            inferred = date.fromisoformat(published)
+            if existing and abs((inferred - existing).days) > 3:
+                return existing.isoformat()
+            return inferred.isoformat()
+        except ValueError:
+            pass
+    value = str(metadata.get("effective_date") or "").strip()
+    return value or None
+
+
+def infer_pub_date(metadata: dict[str, Any], page_url: str | None = None) -> str | None:
+    """Normalize a full publication date, falling back to dated official URLs."""
+    value = str(metadata.get("pub_date") or "").strip()
+    try:
+        return date.fromisoformat(value[:10]).isoformat()
+    except ValueError:
+        pass
+    match = re.search(r"(?:^|/)t(\d{4})(\d{2})(\d{2})_", str(page_url or ""))
+    if match:
+        try:
+            return date(*(int(part) for part in match.groups())).isoformat()
+        except ValueError:
+            pass
+    return value or None
 
 
 def law_status_label(code: str | None) -> str | None:

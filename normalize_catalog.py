@@ -4,8 +4,10 @@
 from __future__ import annotations
 
 import argparse
+import csv
 import hashlib
 import html
+import json
 import re
 import shutil
 import sys
@@ -13,22 +15,20 @@ from collections import defaultdict
 from pathlib import Path
 from typing import Any
 
-from catalog_rules import (
-    COMMENT_DRAFT_PATTERNS,
-    EFFECT_AMAC_OFFICIAL_DEFAULT,
-    EFFECT_COMMENT_DRAFT,
-    EFFECT_EXPLICIT_CURRENT,
-    EFFECT_EXPLICIT_HISTORICAL,
-    EFFECT_INSUFFICIENT_EVIDENCE,
-    EFFECT_REFERENCE_DOCUMENT_TYPE,
-    EFFECT_REFERENCE_TITLE,
-    EFFECT_SUPERSEDED_BY_CATALOG,
-    HISTORICAL_STATUSES,
-    OFFICIAL_RULE_TYPES,
-    REFERENCE_TITLE_PATTERNS,
-    REFERENCE_TYPES,
+from catalog_rules import COMMENT_DRAFT_PATTERNS, REFERENCE_TITLE_PATTERNS
+from csrc_law_crawler.processing.catalog.classification import (
+    _parse_date,
+    china_as_of,
+    disciplinary_penalty_subtype,
+    enforcement_classification_for,
+    effectiveness_for as classify_effectiveness,
+    load_classification_overrides,
+    material_classification_for,
+    reference_lifecycle_for,
 )
+from csrc_law_crawler.processing.catalog.identity import is_trial_title
 from normalize_laws import normalized_laws_dir
+from parser import infer_effective_date
 from runtime import log_event
 from storage import (
     canonical_dir,
@@ -40,6 +40,7 @@ from storage import (
     load_json,
     output_path,
     relative_to_output,
+    reports_dir,
     revisions_path,
     run_with_output_lock,
     save_json,
@@ -47,12 +48,8 @@ from storage import (
 )
 
 PAGE_NUMBER_RE = re.compile(r"^\s*\d{1,3}\s*$")
-CHAPTER_RE = re.compile(
-    r"^第[一二三四五六七八九十百千万零〇两\d]+[章节编]\s*"
-)
-ARTICLE_RE = re.compile(
-    r"^(第[一二三四五六七八九十百千万零〇两\d]+条)(?:\s+|(?=[^\s]))"
-)
+CHAPTER_RE = re.compile(r"^第[一二三四五六七八九十百千万零〇两\d]+[章节编]\s*")
+ARTICLE_RE = re.compile(r"^(第[一二三四五六七八九十百千万零〇两\d]+条)(?:\s+|(?=[^\s]))")
 ITEM_RE = re.compile(r"^[（(][一二三四五六七八九十百零〇两\d]+[）)]")
 ASCII_EDGE_RE = re.compile(r"[A-Za-z0-9]$")
 ASCII_START_RE = re.compile(r"^[A-Za-z0-9]")
@@ -68,14 +65,6 @@ TITLE_HISTORICAL_PATTERNS = (
     "(失效)",
     "已失效",
 )
-PUBLISH_DATE_EFFECTIVE_PATTERNS = (
-    "自发布之日起施行",
-    "自发布之日起实施",
-    "自公布之日起施行",
-    "自公布之日起实施",
-    "自印发之日起施行",
-    "自印发之日起实施",
-)
 
 
 def catalog_normalized_manifest_path() -> Path:
@@ -84,6 +73,14 @@ def catalog_normalized_manifest_path() -> Path:
 
 def catalog_manifest_path() -> Path:
     return catalog_dir() / "manifest.json"
+
+
+def classification_review_queue_path() -> Path:
+    return canonical_dir() / "classification_review_queue.json"
+
+
+def classification_review_queue_csv_path() -> Path:
+    return canonical_dir() / "classification_review_queue.csv"
 
 
 def _join_fragment(left: str, right: str) -> str:
@@ -188,9 +185,7 @@ def _source_assets(entity: dict[str, Any]) -> list[dict[str, Any]]:
                 "source_url": page_url or None,
                 "local_file": local_file or None,
                 "sha256": sha256,
-                "download_status": (
-                    "ok" if local_path and local_path.exists() else "source_only"
-                ),
+                "download_status": ("ok" if local_path and local_path.exists() else "source_only"),
                 "source_system": source.get("system"),
                 "source_record_id": source.get("record_id"),
                 "source_role": source.get("role"),
@@ -226,7 +221,7 @@ def _append_unique(target: list[Any], value: Any) -> None:
 
 
 def _merge_asset_into(existing: dict[str, Any], incoming: dict[str, Any]) -> None:
-    for field in ("source_url", "local_file"):
+    for field in ("asset_id", "source_url", "local_file"):
         if not existing.get(field) and incoming.get(field):
             existing[field] = incoming[field]
     for field in ("source_urls", "local_files", "source_records"):
@@ -256,10 +251,7 @@ def _merge_assets(
             f"sha256:{sha256}"
             if sha256
             else str(
-                asset.get("local_file")
-                or asset.get("source_url")
-                or asset.get("asset_id")
-                or ""
+                asset.get("local_file") or asset.get("source_url") or asset.get("asset_id") or ""
             )
         )
         if not key:
@@ -275,17 +267,19 @@ def _merge_assets(
             result[key] = merged
         else:
             _merge_asset_into(result[key], asset)
+    for key, asset in result.items():
+        if not asset.get("asset_id"):
+            digest = hashlib.sha1(key.encode("utf-8")).hexdigest()[:20]
+            asset["asset_id"] = f"catalog_asset_{digest}"
     return list(result.values())
 
 
 def is_comment_draft_entity(entity: dict[str, Any]) -> bool:
     metadata = entity.get("metadata") or {}
-    preferred = entity.get("preferred_content") or {}
     haystack = "\n".join(
         [
             str(entity.get("title") or ""),
             str(metadata.get("name") or ""),
-            str(preferred.get("plain_text") or "")[:1200],
         ]
     )
     return any(pattern in haystack for pattern in COMMENT_DRAFT_PATTERNS)
@@ -328,10 +322,70 @@ def catalog_superseded_by() -> dict[str, list[dict[str, Any]]]:
                 "source": relation.get("source"),
                 "rule_id": relation.get("rule_id"),
                 "confidence": relation.get("confidence"),
+                "effective_date": (relation.get("evidence") or {}).get(
+                    "effective_date"
+                ),
                 "evidence": relation.get("evidence") or {},
             }
         )
     return result
+
+
+def catalog_publishes() -> dict[str, list[str]]:
+    result: dict[str, list[str]] = defaultdict(list)
+    for relation in load_json(catalog_relations_path(), {}).get("items") or []:
+        if relation.get("relation") != "publishes":
+            continue
+        parent_id = str(relation.get("from") or "")
+        child_id = str(relation.get("to") or "")
+        if parent_id and child_id and child_id not in result[parent_id]:
+            result[parent_id].append(child_id)
+    return result
+
+
+def catalog_finalized_by() -> dict[str, list[dict[str, Any]]]:
+    result: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    for relation in load_json(catalog_relations_path(), {}).get("items") or []:
+        if relation.get("relation") != "finalizes_draft":
+            continue
+        draft_id = str(relation.get("to") or "")
+        formal_id = str(relation.get("from") or "")
+        if draft_id and formal_id:
+            result[draft_id].append(
+                {
+                    "canonical_id": formal_id,
+                    "source": relation.get("source"),
+                    "confidence": relation.get("confidence"),
+                    "evidence": relation.get("evidence") or {},
+                }
+            )
+    return result
+
+
+def catalog_same_instrument_groups() -> list[set[str]]:
+    adjacency: dict[str, set[str]] = defaultdict(set)
+    for relation in load_json(catalog_relations_path(), {}).get("items") or []:
+        if relation.get("relation") != "same_instrument_copy":
+            continue
+        left = str(relation.get("from") or "")
+        right = str(relation.get("to") or "")
+        if left and right:
+            adjacency[left].add(right)
+            adjacency[right].add(left)
+    groups: list[set[str]] = []
+    remaining = set(adjacency)
+    while remaining:
+        seed = remaining.pop()
+        group = {seed}
+        stack = [seed]
+        while stack:
+            current = stack.pop()
+            for neighbour in adjacency[current] - group:
+                group.add(neighbour)
+                remaining.discard(neighbour)
+                stack.append(neighbour)
+        groups.append(group)
+    return groups
 
 
 def _catalog_entity_context(path: Path) -> tuple[dict[str, Any], str, str, dict[str, Any]]:
@@ -413,9 +467,7 @@ def _catalog_revision_ref(
         return None
     return {
         "family_id": revision_by_law_id[neris_source_id],
-        "relations_file": str(
-            relative_to_output(canonical_dir() / "relations" / "graph.json")
-        ),
+        "relations_file": str(relative_to_output(canonical_dir() / "relations" / "graph.json")),
     }
 
 
@@ -423,103 +475,66 @@ def _catalog_content_status(plain_text: str) -> str:
     return "full_text" if plain_text.strip() else "metadata_only"
 
 
-def _version_date(value: Any) -> str | None:
-    text = str(value or "")
-    if len(text) == 8 and text.isdigit():
-        return f"{text[:4]}-{text[4:6]}-{text[6:]}"
-    return None
-
-
 def _infer_effective_date(metadata: dict[str, Any], plain_text: str) -> str | None:
-    if metadata.get("effective_date"):
-        return str(metadata["effective_date"])
-    if any(pattern in plain_text for pattern in PUBLISH_DATE_EFFECTIVE_PATTERNS):
-        return _version_date(metadata.get("version")) or metadata.get("pub_date")
-    return None
+    return infer_effective_date(metadata, plain_text)
+
+
+def _same_copy_effectiveness_evidence(
+    source_files: list[Path],
+) -> dict[str, dict[str, Any]]:
+    entities = {path.stem: load_json(path, {}) for path in source_files}
+    shared: dict[str, dict[str, Any]] = {}
+    for group in catalog_same_instrument_groups():
+        values: dict[str, set[str]] = defaultdict(set)
+        rule_peer_ids: list[str] = []
+        for entity_id in group:
+            entity = entities.get(entity_id) or {}
+            if (entity.get("material_classification") or {}).get("lane") == "rule":
+                rule_peer_ids.append(entity_id)
+            metadata = entity.get("metadata") or {}
+            plain_text = str((entity.get("preferred_content") or {}).get("plain_text") or "")
+            effective_date = _infer_effective_date(metadata, plain_text)
+            for field, value in (
+                ("effective_date", effective_date),
+                ("ineffective_date", metadata.get("ineffective_date")),
+                ("status", entity.get("status") or metadata.get("status")),
+            ):
+                text = str(value or "").strip()
+                if text and text != "unknown":
+                    values[field].add(text)
+        inherited = {
+            field: next(iter(field_values))
+            for field, field_values in values.items()
+            if len(field_values) == 1
+        }
+        if rule_peer_ids:
+            inherited["material_lane"] = "rule"
+            inherited["material_inherited_from"] = sorted(rule_peer_ids)
+        if not inherited:
+            continue
+        for entity_id in group:
+            shared[entity_id] = {
+                **inherited,
+                "effectiveness_inherited_from": sorted(group - {entity_id}),
+            }
+    return shared
 
 
 def effectiveness_for(
     entity: dict[str, Any],
     *,
     superseded_by: list[dict[str, Any]] | None = None,
+    material_classification: dict[str, Any] | None = None,
+    as_of: str | None = None,
+    override: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    raw_status = str(entity.get("status") or "unknown")
-    document_type = str(entity.get("document_type") or "")
-    source_system = (entity.get("preferred_content") or {}).get("source_system")
-    superseded_by = superseded_by or []
-    if raw_status in HISTORICAL_STATUSES:
-        rule = EFFECT_EXPLICIT_HISTORICAL
-        status = "historical"
-        confidence = rule.confidence
-        basis = "explicit_historical_status"
-        label = raw_status
-    elif is_historical_title_entity(entity):
-        rule = EFFECT_EXPLICIT_HISTORICAL
-        status = "historical"
-        confidence = rule.confidence
-        basis = "explicit_historical_status"
-        label = "已废止/失效（标题标注）"
-    elif is_comment_draft_entity(entity):
-        rule = EFFECT_COMMENT_DRAFT
-        status = "not_applicable"
-        confidence = rule.confidence
-        basis = "comment_draft_signal"
-        label = "征求意见/仅供参考"
-    elif superseded_by:
-        rule = EFFECT_SUPERSEDED_BY_CATALOG
-        status = "historical"
-        confidence = max(
-            float(item.get("confidence") or 0.0) for item in superseded_by
-        )
-        basis = "superseded_by_catalog_relation"
-        label = "已被替代"
-    elif raw_status == "现行有效":
-        rule = EFFECT_EXPLICIT_CURRENT
-        status = "current"
-        confidence = rule.confidence
-        basis = "explicit_current_status"
-        label = raw_status
-    elif document_type in REFERENCE_TYPES:
-        rule = EFFECT_REFERENCE_DOCUMENT_TYPE
-        status = "not_applicable"
-        confidence = rule.confidence
-        basis = "reference_document_type"
-        label = "仅供参考"
-    elif is_reference_title_entity(entity):
-        rule = EFFECT_REFERENCE_TITLE
-        status = "not_applicable"
-        confidence = rule.confidence
-        basis = "reference_title_signal"
-        label = "仅供参考"
-    elif (
-        source_system == "amac"
-        and document_type in OFFICIAL_RULE_TYPES
-        and raw_status in {"unknown", "", "None"}
-    ):
-        rule = EFFECT_AMAC_OFFICIAL_DEFAULT
-        status = "current"
-        confidence = rule.confidence
-        basis = "amac_official_rule_default"
-        label = "有效（AMAC未显式标注）"
-    else:
-        rule = EFFECT_INSUFFICIENT_EVIDENCE
-        status = "unknown"
-        confidence = rule.confidence
-        basis = "insufficient_evidence"
-        label = "待核验"
-    result = {
-        "status": status,
-        "raw_status": raw_status,
-        "label": label,
-        "basis": basis,
-        "rule_id": rule.rule_id,
-        "source": source_system,
-        "confidence": confidence,
-        "as_of": utc_now_iso()[:10],
-    }
-    if superseded_by:
-        result["superseded_by"] = superseded_by
-    return result
+    return classify_effectiveness(
+        entity,
+        material_classification=material_classification,
+        superseded_by=superseded_by,
+        as_of=as_of,
+        override=override,
+    )
 
 
 def normalize_catalog_entity(
@@ -527,6 +542,11 @@ def normalize_catalog_entity(
     *,
     revision_by_law_id: dict[str, str] | None = None,
     superseded_by_catalog: dict[str, list[dict[str, Any]]] | None = None,
+    publishes_by_catalog: dict[str, list[str]] | None = None,
+    finalized_by_catalog: dict[str, list[dict[str, Any]]] | None = None,
+    same_copy_evidence: dict[str, dict[str, Any]] | None = None,
+    overrides: dict[str, dict[str, Any]] | None = None,
+    as_of: str | None = None,
 ) -> dict[str, Any]:
     entity, entity_id, title, metadata = _catalog_entity_context(path)
     (
@@ -545,7 +565,51 @@ def normalize_catalog_entity(
     inferred_effective_date = _infer_effective_date(metadata, plain_text)
     if inferred_effective_date:
         metadata["effective_date"] = inferred_effective_date
-    effectiveness = effectiveness_for(entity, superseded_by=superseded_by)
+    superseding_effective_dates = sorted(
+        {
+            str(item.get("effective_date"))[:10]
+            for item in superseded_by
+            if _parse_date(item.get("effective_date")) is not None
+        }
+    )
+    if superseding_effective_dates and not _parse_date(metadata.get("ineffective_date")):
+        metadata["ineffective_date"] = superseding_effective_dates[0]
+    inherited = (same_copy_evidence or {}).get(entity_id) or {}
+    for field in ("effective_date", "ineffective_date"):
+        if not metadata.get(field) and inherited.get(field):
+            metadata[field] = inherited[field]
+    if str(metadata.get("status") or "unknown") == "unknown" and inherited.get("status"):
+        metadata["status"] = inherited["status"]
+    if inherited.get("effectiveness_inherited_from"):
+        metadata["effectiveness_inherited_from"] = inherited["effectiveness_inherited_from"]
+    classification_entity = {**entity, "metadata": metadata}
+    if inherited.get("material_lane") == "rule":
+        classification_entity["material_lane"] = "rule"
+        metadata["material_inherited_from"] = inherited.get("material_inherited_from") or []
+    if str(classification_entity.get("status") or "unknown") == "unknown":
+        classification_entity["status"] = metadata.get("status") or "unknown"
+    override = (overrides or {}).get(entity_id)
+    material_classification = material_classification_for(
+        classification_entity,
+        publishes=(publishes_by_catalog or {}).get(entity_id),
+        override=override,
+    )
+    effectiveness = effectiveness_for(
+        classification_entity,
+        superseded_by=superseded_by,
+        material_classification=material_classification,
+        as_of=as_of,
+        override=override,
+    )
+    enforcement_classification = enforcement_classification_for(
+        classification_entity,
+        material_classification=material_classification,
+    )
+    reference_lifecycle = reference_lifecycle_for(
+        classification_entity,
+        material_classification=material_classification,
+        finalized_by=(finalized_by_catalog or {}).get(entity_id),
+    )
 
     return {
         "schema_version": 1,
@@ -556,8 +620,12 @@ def normalize_catalog_entity(
         "content_status": content_status,
         "title": title,
         "document_type": metadata.get("document_type"),
-        "status": metadata.get("status"),
+        "status": classification_entity.get("status") or metadata.get("status"),
+        "material_lane": entity.get("material_lane"),
+        "material_classification": material_classification,
         "effectiveness": effectiveness,
+        "reference_lifecycle": reference_lifecycle,
+        "enforcement_classification": enforcement_classification,
         "superseded_by": superseded_by,
         "metadata": metadata,
         "preferred_source": {
@@ -569,8 +637,170 @@ def normalize_catalog_entity(
         "full_text_plain": plain_text,
         "full_text_markdown": markdown,
         "tables": tables,
-        "assets": _merge_assets(inherited_assets, _source_assets(entity)),
+        "assets": _merge_assets(
+            entity.get("assets") or [],
+            _merge_assets(inherited_assets, _source_assets(entity)),
+        ),
     }
+
+
+def _classification_review_items(
+    manifest_items: list[dict[str, Any]],
+    *,
+    out_dir: Path,
+    as_of: str,
+    same_copy_conflicts: dict[str, dict[str, list[str]]] | None = None,
+) -> list[dict[str, Any]]:
+    review_items: list[dict[str, Any]] = []
+    for manifest_item in manifest_items:
+        doc = load_json(out_dir / Path(str(manifest_item["file"])).name, {})
+        material = doc.get("material_classification") or {}
+        effectiveness = doc.get("effectiveness") or {}
+        reference_lifecycle = doc.get("reference_lifecycle") or {}
+        enforcement = doc.get("enforcement_classification") or {}
+        metadata = doc.get("metadata") or {}
+        reasons: list[str] = []
+        lane = str(material.get("lane") or "unknown")
+        status = str(effectiveness.get("status") or "unknown")
+        if lane == "unknown":
+            reasons.append("material_nature_unknown")
+        if lane == "rule" and status == "unknown":
+            reasons.append("effectiveness_unknown")
+        if (material.get("evidence") or {}).get("source_lane_conflict"):
+            reasons.append("source_lane_conflict")
+        material_confidence = float(material.get("confidence") or 0.0)
+        effect_confidence = float(effectiveness.get("confidence") or 0.0)
+        if min(material_confidence, effect_confidence) < 0.8:
+            reasons.append("low_confidence")
+        effective_date = str(metadata.get("effective_date") or "")[:10]
+        ineffective_date = str(metadata.get("ineffective_date") or "")[:10]
+        if status == "current" and effective_date and effective_date > as_of:
+            reasons.append("future_effective_date_marked_current")
+        if status == "current" and ineffective_date and ineffective_date <= as_of:
+            reasons.append("expired_date_marked_current")
+        if lane == "reference" and status != "not_applicable":
+            reasons.append("reference_effectiveness_conflict")
+        penalty_subtype = disciplinary_penalty_subtype(doc.get("title"))
+        if penalty_subtype and enforcement.get("category") != "penalties":
+            reasons.append("disciplinary_material_not_penalties")
+        if lane == "rule" and enforcement.get("category") == "penalties":
+            reasons.append("penalty_rule_conflict")
+        if lane == "rule" and is_trial_title(doc.get("title")) and not effective_date:
+            reasons.append("trial_missing_commencement_evidence")
+        if reference_lifecycle.get("status") == "unfinalized":
+            reasons.append("draft_formal_relation_unknown")
+        provenances = {
+            str(source.get("web_category_provenance"))
+            for source in doc.get("sources") or []
+            if source.get("web_category_provenance")
+        }
+        if provenances and provenances <= {"endpoint_profile", "url_inference"}:
+            reasons.append("web_taxonomy_low_provenance")
+        copy_conflict = (same_copy_conflicts or {}).get(str(doc.get("id") or ""))
+        if copy_conflict:
+            reasons.append("same_instrument_effectiveness_conflict")
+        if not reasons:
+            continue
+        source_urls = sorted(
+            {
+                str(source.get("page_url"))
+                for source in doc.get("sources") or []
+                if source.get("page_url")
+            }
+        )
+        review_items.append(
+            {
+                "id": doc.get("id"),
+                "title": doc.get("title"),
+                "reasons": reasons,
+                "material_lane": lane,
+                "material_category": material.get("category"),
+                "material_confidence": material_confidence,
+                "material_basis": material.get("basis"),
+                "effectiveness": status,
+                "effectiveness_confidence": effect_confidence,
+                "effectiveness_basis": effectiveness.get("basis"),
+                "reference_lifecycle": reference_lifecycle.get("status"),
+                "enforcement_category": enforcement.get("category"),
+                "enforcement_subtype": enforcement.get("subtype"),
+                "pub_org": metadata.get("pub_org"),
+                "fileno": metadata.get("fileno"),
+                "pub_date": metadata.get("pub_date"),
+                "effective_date": metadata.get("effective_date"),
+                "ineffective_date": metadata.get("ineffective_date"),
+                "official_sources": source_urls,
+                "same_copy_conflict": copy_conflict,
+                "canonical_file": manifest_item.get("file"),
+            }
+        )
+    return review_items
+
+
+def _write_classification_review_queue(
+    items: list[dict[str, Any]],
+    *,
+    as_of: str,
+) -> None:
+    payload = {
+        "schema_version": 1,
+        "updated_at": utc_now_iso(),
+        "classification_as_of": as_of,
+        "count": len(items),
+        "items": items,
+    }
+    save_json(classification_review_queue_path(), payload)
+    csv_path = classification_review_queue_csv_path()
+    csv_path.parent.mkdir(parents=True, exist_ok=True)
+    fieldnames = [
+        "id",
+        "title",
+        "reasons",
+        "material_lane",
+        "material_category",
+        "material_confidence",
+        "material_basis",
+        "effectiveness",
+        "effectiveness_confidence",
+        "effectiveness_basis",
+        "reference_lifecycle",
+        "enforcement_category",
+        "enforcement_subtype",
+        "pub_org",
+        "fileno",
+        "pub_date",
+        "effective_date",
+        "ineffective_date",
+        "official_sources",
+        "same_copy_conflict",
+        "canonical_file",
+    ]
+    with csv_path.open("w", encoding="utf-8-sig", newline="") as handle:
+        writer = csv.DictWriter(handle, fieldnames=fieldnames)
+        writer.writeheader()
+        for item in items:
+            row = dict(item)
+            row["reasons"] = ";".join(item.get("reasons") or [])
+            row["official_sources"] = ";".join(item.get("official_sources") or [])
+            row["same_copy_conflict"] = json.dumps(
+                item.get("same_copy_conflict") or {}, ensure_ascii=False
+            )
+            writer.writerow(row)
+    reason_counts: dict[str, int] = defaultdict(int)
+    for item in items:
+        for reason in item.get("reasons") or []:
+            reason_counts[str(reason)] += 1
+    save_json(
+        reports_dir() / "classification_quality.json",
+        {
+            "schema_version": 1,
+            "updated_at": utc_now_iso(),
+            "classification_as_of": as_of,
+            "review_count": len(items),
+            "reason_counts": dict(sorted(reason_counts.items())),
+            "queue_json": relative_to_output(classification_review_queue_path()),
+            "queue_csv": relative_to_output(classification_review_queue_csv_path()),
+        },
+    )
 
 
 def normalize_catalog(
@@ -578,7 +808,9 @@ def normalize_catalog(
     limit: int | None = None,
     force: bool = False,
     clean: bool = False,
+    as_of: str | None = None,
 ) -> dict[str, Any]:
+    as_of = as_of or china_as_of()
     source_files = listed_output_files(
         catalog_manifest_path(),
         field="file",
@@ -596,10 +828,19 @@ def normalize_catalog(
     empty_content = 0
     method_counts: dict[str, int] = defaultdict(int)
     items: list[dict[str, Any]] = []
-    revision_by_law_id = (
-        load_json(revisions_path(), {}).get("by_law_id") or {}
-    )
+    revision_by_law_id = load_json(revisions_path(), {}).get("by_law_id") or {}
     superseded_by_catalog = catalog_superseded_by()
+    publishes_by_catalog = catalog_publishes()
+    finalized_by_catalog = catalog_finalized_by()
+    same_copy_evidence = _same_copy_effectiveness_evidence(source_files)
+    overrides = load_classification_overrides()
+    source_ids = {path.stem for path in source_files}
+    missing_override_ids = sorted(set(overrides) - source_ids)
+    if missing_override_ids:
+        raise ValueError(
+            "classification overrides reference missing canonical IDs: "
+            + ", ".join(missing_override_ids)
+        )
     for index, path in enumerate(source_files, start=1):
         out_path = out_dir / path.name
         if out_path.exists() and not force:
@@ -610,6 +851,11 @@ def normalize_catalog(
                 path,
                 revision_by_law_id=revision_by_law_id,
                 superseded_by_catalog=superseded_by_catalog,
+                publishes_by_catalog=publishes_by_catalog,
+                finalized_by_catalog=finalized_by_catalog,
+                same_copy_evidence=same_copy_evidence,
+                overrides=overrides,
+                as_of=as_of,
             )
             save_json(out_path, doc)
             written += 1
@@ -621,8 +867,15 @@ def normalize_catalog(
                 "id": doc.get("id"),
                 "title": doc.get("title"),
                 "status": doc.get("status"),
+                "material_lane": (doc.get("material_classification") or {}).get("lane"),
+                "material_category": (doc.get("material_classification") or {}).get("category"),
                 "effectiveness": (doc.get("effectiveness") or {}).get("status"),
                 "effectiveness_basis": (doc.get("effectiveness") or {}).get("basis"),
+                "reference_lifecycle": (doc.get("reference_lifecycle") or {}).get("status"),
+                "enforcement_category": (doc.get("enforcement_classification") or {}).get(
+                    "category"
+                ),
+                "enforcement_subtype": (doc.get("enforcement_classification") or {}).get("subtype"),
                 "source_system": (doc.get("preferred_source") or {}).get("system"),
                 "source_file": relative_to_output(path),
                 "file": relative_to_output(out_path),
@@ -642,6 +895,7 @@ def normalize_catalog(
     manifest = {
         "schema_version": 1,
         "updated_at": utc_now_iso(),
+        "classification_as_of": as_of,
         "source_dir": relative_to_output(catalog_laws_dir()),
         "normalized_dir": relative_to_output(out_dir),
         "count": len(items),
@@ -651,6 +905,39 @@ def normalize_catalog(
         "normalization_methods": dict(sorted(method_counts.items())),
         "items": items,
     }
+    same_copy_conflicts: dict[str, dict[str, list[str]]] = {}
+    for group in catalog_same_instrument_groups():
+        group_docs = [load_json(out_dir / f"{entity_id}.json", {}) for entity_id in group]
+        fields = {
+            field: sorted(
+                {
+                    str((doc.get("metadata") or {}).get(field) or "")
+                    for doc in group_docs
+                    if (doc.get("metadata") or {}).get(field)
+                }
+            )
+            for field in ("effective_date", "ineffective_date")
+        }
+        fields["effectiveness"] = sorted(
+            {
+                str((doc.get("effectiveness") or {}).get("status") or "")
+                for doc in group_docs
+                if (doc.get("effectiveness") or {}).get("status")
+            }
+        )
+        conflict = {field: values for field, values in fields.items() if len(values) > 1}
+        if conflict:
+            for entity_id in group:
+                same_copy_conflicts[entity_id] = conflict
+    review_items = _classification_review_items(
+        items,
+        out_dir=out_dir,
+        as_of=as_of,
+        same_copy_conflicts=same_copy_conflicts,
+    )
+    _write_classification_review_queue(review_items, as_of=as_of)
+    manifest["classification_review_count"] = len(review_items)
+    manifest["classification_review_queue"] = relative_to_output(classification_review_queue_path())
     save_json(catalog_normalized_manifest_path(), manifest)
     return manifest
 
@@ -660,12 +947,18 @@ def main() -> int:
     parser.add_argument("--limit", type=int, default=None)
     parser.add_argument("--force", action="store_true")
     parser.add_argument("--clean", action="store_true")
+    parser.add_argument(
+        "--as-of",
+        default=None,
+        help="分类基准日（YYYY-MM-DD，默认中国时区当天）",
+    )
     args = parser.parse_args()
     try:
         manifest = normalize_catalog(
             limit=args.limit,
             force=args.force,
             clean=args.clean,
+            as_of=args.as_of,
         )
     except KeyboardInterrupt:
         return 130

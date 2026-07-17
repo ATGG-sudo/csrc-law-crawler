@@ -12,7 +12,14 @@ from catalog_rules import (
 from catalog_services import CatalogRelationIngestor
 
 from .identity import PUBLISHING_TITLE_RE, QUOTED_TITLE_RE, normalize_title
-from .matching import infer_known_successor_relations, infer_trial_replacement_relations
+from .matching import (
+    infer_draft_finalization_relations,
+    infer_explicit_successor_relations,
+    infer_known_successor_relations,
+    infer_same_instrument_relations,
+    infer_trial_replacement_relations,
+)
+
 
 def _add_amac_page_attachment_relations(
     amac_records: list[dict[str, Any]],
@@ -38,6 +45,7 @@ def _add_amac_page_attachment_relations(
                     "confidence": RELATION_AMAC_PAGE_ATTACHMENT.confidence,
                 },
             )
+
 
 def _add_neris_title_relations(
     neris_records: list[dict[str, Any]],
@@ -68,6 +76,7 @@ def _add_neris_title_relations(
                     },
                 )
 
+
 def _add_trial_replacement_relations(
     entities: dict[str, dict[str, Any]],
     relation_ingestor: CatalogRelationIngestor,
@@ -84,6 +93,7 @@ def _add_trial_replacement_relations(
             },
         )
 
+
 def _add_known_successor_relations(
     entities: dict[str, dict[str, Any]],
     relation_ingestor: CatalogRelationIngestor,
@@ -99,6 +109,30 @@ def _add_known_successor_relations(
                 **(relation.get("evidence") or {}),
             },
         )
+
+
+def _add_inferred_relations(
+    entities: dict[str, dict[str, Any]],
+    relation_ingestor: CatalogRelationIngestor,
+) -> None:
+    for infer in (
+        infer_draft_finalization_relations,
+        infer_same_instrument_relations,
+        infer_explicit_successor_relations,
+    ):
+        for relation in infer(entities):
+            relation_ingestor.add(
+                str(relation["from"]),
+                str(relation["to"]),
+                str(relation["relation"]),
+                {
+                    "source": relation.get("source"),
+                    "rule_id": relation.get("rule_id"),
+                    "confidence": relation.get("confidence"),
+                    **(relation.get("evidence") or {}),
+                },
+            )
+
 
 def _build_catalog_relations(
     *,
@@ -117,6 +151,7 @@ def _build_catalog_relations(
     )
     _add_trial_replacement_relations(entities, relation_ingestor)
     _add_known_successor_relations(entities, relation_ingestor)
+    _add_inferred_relations(entities, relation_ingestor)
     return relation_ingestor.items
 
 

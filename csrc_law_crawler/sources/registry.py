@@ -10,6 +10,8 @@ from typing import Any
 
 
 DEFAULT_REGISTRY_PATH = Path(__file__).with_name("csrc_sources.json")
+EXPECTED_ENDPOINT_COUNT = 85
+EXPECTED_PROFILE_COUNT = 86
 ALLOWED_SCOPE_MODES = {
     "enumerable",
     "catalog_filter",
@@ -70,9 +72,10 @@ def validate_registry(registry: dict[str, Any]) -> None:
             profile_ids.add(profile_id)
             profile_count += 1
 
-    if len(endpoints) != 85 or profile_count != 86:
+    if len(endpoints) != EXPECTED_ENDPOINT_COUNT or profile_count != EXPECTED_PROFILE_COUNT:
         raise ValueError(
-            f"registry must contain 85 endpoints and 86 profiles, got "
+            f"registry must contain {EXPECTED_ENDPOINT_COUNT} endpoints and "
+            f"{EXPECTED_PROFILE_COUNT} profiles, got "
             f"{len(endpoints)} and {profile_count}"
         )
 
@@ -120,6 +123,8 @@ __all__ = [
     "ALLOWED_MATERIAL_LANES",
     "ALLOWED_SCOPE_MODES",
     "DEFAULT_REGISTRY_PATH",
+    "EXPECTED_ENDPOINT_COUNT",
+    "EXPECTED_PROFILE_COUNT",
     "endpoint_query_terms",
     "load_registry",
     "registry_path",

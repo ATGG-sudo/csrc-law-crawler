@@ -30,6 +30,11 @@ class SourceRecord:
     fingerprints: JsonObject = field(default_factory=dict)
     assets: list[JsonObject] = field(default_factory=list)
     attachment_documents: list[JsonObject] = field(default_factory=list)
+    web_category_leaf: str | None = None
+    web_category_path: list[str] = field(default_factory=list)
+    web_category_provenance: str | None = None
+    page_role: str = "unknown"
+    enforcement_classification: JsonObject | None = None
 
 
 @dataclass(frozen=True)
@@ -47,6 +52,7 @@ class WritDocument:
     legal_basis: list[JsonObject] = field(default_factory=list)
     parties: list[JsonObject] = field(default_factory=list)
     source: JsonObject = field(default_factory=dict)
+    enforcement_classification: JsonObject | None = None
 
 
 @dataclass(frozen=True)
@@ -68,6 +74,7 @@ class CatalogEntity:
     title: str
     document_type: str
     status: str
+    material_classification: JsonObject
     metadata: JsonObject
     preferred_content: JsonObject
     sources: list[JsonObject]
@@ -81,6 +88,7 @@ class CanonicalLaw:
     document_type: str
     status: str
     effectiveness: JsonObject
+    material_classification: JsonObject
     metadata: JsonObject
     sources: list[JsonObject]
     full_text_plain: str
@@ -121,6 +129,86 @@ ARRAY = {"type": "array"}
 NULLABLE_STRING = {"type": ["string", "null"]}
 NULLABLE_INTEGER = {"type": ["integer", "null"]}
 
+MATERIAL_CLASSIFICATION_SCHEMA = {
+    "type": "object",
+    "additionalProperties": True,
+    "properties": {
+        "lane": {"enum": ["rule", "reference", "unknown"]},
+        "category": {
+            "enum": [
+                "law_regulation",
+                "normative_document",
+                "self_regulatory_rule",
+                "business_rule",
+                "publication_consultation",
+                "interpretation_qa",
+                "template_guidance",
+                "research_statistics",
+                "enforcement_reference",
+                "other_reference",
+                "unknown",
+            ]
+        },
+        "basis": STRING,
+        "rule_id": STRING,
+        "confidence": {"type": "number", "minimum": 0, "maximum": 1},
+        "evidence": OBJECT,
+    },
+    "required": ["lane", "category", "basis", "rule_id", "confidence", "evidence"],
+}
+MATERIAL_CLASSIFICATION_REF = {"$ref": "#/$defs/materialClassification"}
+EFFECTIVENESS_SCHEMA = {
+    "type": "object",
+    "additionalProperties": True,
+    "properties": {
+        "status": {
+            "enum": [
+                "current",
+                "pending",
+                "historical",
+                "unknown",
+                "not_applicable",
+            ]
+        },
+        "as_of": {"type": "string", "format": "date"},
+        "basis": STRING,
+        "rule_id": STRING,
+        "confidence": {"type": "number", "minimum": 0, "maximum": 1},
+    },
+    "required": ["status", "as_of", "basis", "rule_id", "confidence"],
+}
+ENFORCEMENT_CLASSIFICATION_SCHEMA = {
+    "type": ["object", "null"],
+    "additionalProperties": True,
+    "properties": {
+        "category": {
+            "enum": [
+                "penalties",
+                "self_regulatory_measure",
+                "abnormal_operation",
+                "missing_institution",
+                "other_enforcement",
+            ]
+        },
+        "subtype": {
+            "enum": [
+                "disciplinary_decision",
+                "disciplinary_prior_notice",
+                "disciplinary_review_decision",
+                "other",
+            ]
+        },
+    },
+}
+REFERENCE_LIFECYCLE_SCHEMA = {
+    "type": "object",
+    "additionalProperties": True,
+    "properties": {
+        "status": {"enum": ["not_applicable", "unfinalized", "finalized", "withdrawn", "unknown"]}
+    },
+    "required": ["status"],
+}
+
 
 SOURCE_RECORD_SCHEMA = _object(
     ["schema_version", "source_record_id", "source_system", "metadata", "content", "source"],
@@ -137,6 +225,21 @@ SOURCE_RECORD_SCHEMA = _object(
         "assets": {"type": "array", "items": OBJECT},
         "attachment_documents": {"type": "array", "items": OBJECT},
         "source": OBJECT,
+        "enforcement_classification": ENFORCEMENT_CLASSIFICATION_SCHEMA,
+        "web_category_leaf": NULLABLE_STRING,
+        "web_category_path": {"type": "array", "items": STRING},
+        "web_category_provenance": {
+            "enum": ["page_breadcrumb", "api_channel", "endpoint_profile", "url_inference", None]
+        },
+        "page_role": {
+            "enum": [
+                "normative_instrument",
+                "case_document",
+                "publication_wrapper",
+                "supporting_material",
+                "unknown",
+            ]
+        },
     },
     title="SourceRecord",
 )
@@ -162,6 +265,7 @@ WRIT_DOCUMENT_SCHEMA = _object(
         "parties": {"type": "array", "items": OBJECT},
         "list_summary": {"type": ["object", "null"]},
         "source": OBJECT,
+        "enforcement_classification": ENFORCEMENT_CLASSIFICATION_SCHEMA,
     },
     title="WritDocument",
 )
@@ -189,6 +293,7 @@ CATALOG_ENTITY_SCHEMA = _object(
         "title",
         "document_type",
         "status",
+        "material_classification",
         "metadata",
         "preferred_content",
         "sources",
@@ -199,12 +304,16 @@ CATALOG_ENTITY_SCHEMA = _object(
         "title": STRING,
         "document_type": STRING,
         "status": STRING,
+        "material_classification": MATERIAL_CLASSIFICATION_REF,
+        "enforcement_classification": ENFORCEMENT_CLASSIFICATION_SCHEMA,
+        "reference_lifecycle": REFERENCE_LIFECYCLE_SCHEMA,
         "metadata": OBJECT,
         "preferred_content": OBJECT,
         "sources": {"type": "array", "items": OBJECT},
     },
     title="CatalogEntity",
 )
+CATALOG_ENTITY_SCHEMA["$defs"] = {"materialClassification": MATERIAL_CLASSIFICATION_SCHEMA}
 
 CANONICAL_LAW_SCHEMA = _object(
     [
@@ -214,6 +323,7 @@ CANONICAL_LAW_SCHEMA = _object(
         "document_type",
         "status",
         "effectiveness",
+        "material_classification",
         "metadata",
         "sources",
         "full_text_plain",
@@ -225,7 +335,10 @@ CANONICAL_LAW_SCHEMA = _object(
         "title": STRING,
         "document_type": {"type": ["string", "null"]},
         "status": STRING,
-        "effectiveness": OBJECT,
+        "effectiveness": EFFECTIVENESS_SCHEMA,
+        "material_classification": MATERIAL_CLASSIFICATION_REF,
+        "enforcement_classification": ENFORCEMENT_CLASSIFICATION_SCHEMA,
+        "reference_lifecycle": REFERENCE_LIFECYCLE_SCHEMA,
         "metadata": OBJECT,
         "preferred_source": OBJECT,
         "sources": {"type": "array", "items": OBJECT},
@@ -237,6 +350,7 @@ CANONICAL_LAW_SCHEMA = _object(
     },
     title="CanonicalLaw",
 )
+CANONICAL_LAW_SCHEMA["$defs"] = {"materialClassification": MATERIAL_CLASSIFICATION_SCHEMA}
 
 RELATION_EDGE_SCHEMA = _object(
     ["from", "to", "relation", "source", "confidence", "evidence"],
@@ -281,10 +395,7 @@ SCHEMA_SNAPSHOT_DIR = Path("schemas")
 
 
 def schema_snapshot_files() -> dict[str, Path]:
-    return {
-        name: SCHEMA_SNAPSHOT_DIR / f"{name}.schema.json"
-        for name in JSON_SCHEMAS
-    }
+    return {name: SCHEMA_SNAPSHOT_DIR / f"{name}.schema.json" for name in JSON_SCHEMAS}
 
 
 def _type_name(value: Any) -> str:
@@ -324,11 +435,11 @@ def _matches_type(value: Any, expected: str) -> bool:
 
 
 def validate_schema(schema: JsonSchema, value: Any, *, path: str = "$") -> list[str]:
+    if "enum" in schema and value not in schema["enum"]:
+        return [f"{path}: value {value!r} is not in allowed enum"]
     expected_type = schema.get("type")
     if expected_type:
-        expected_types = (
-            expected_type if isinstance(expected_type, list) else [expected_type]
-        )
+        expected_types = expected_type if isinstance(expected_type, list) else [expected_type]
         if not any(_matches_type(value, str(item)) for item in expected_types):
             return [
                 f"{path}: expected {'/'.join(str(item) for item in expected_types)}, "
@@ -354,9 +465,7 @@ def validate_schema(schema: JsonSchema, value: Any, *, path: str = "$") -> list[
         item_schema = schema.get("items")
         if isinstance(item_schema, dict):
             for index, item in enumerate(value):
-                issues.extend(
-                    validate_schema(item_schema, item, path=f"{path}[{index}]")
-                )
+                issues.extend(validate_schema(item_schema, item, path=f"{path}[{index}]"))
     return issues
 
 

@@ -22,7 +22,7 @@ from config import (
 )
 from download_utils import DownloadedBytes, RetryableContentError, read_binary_response
 from failure_taxonomy import FailureReason
-from http_policy import HTTPPolicy
+from http_policy import HTTPPolicy, record_http_retry
 from runtime import log_event, log_metric
 
 
@@ -125,33 +125,6 @@ class HumanLikeClient:
             status=status,
         )
 
-    def _record_retry(
-        self,
-        *,
-        url: str,
-        attempt: int,
-        wait: float,
-        reason: FailureReason,
-        exc: BaseException | None = None,
-    ) -> None:
-        fields: dict[str, Any] = {}
-        summary = "拦截/超时" if exc is None else f"错误 {exc!r}"
-        if exc is not None:
-            fields["error_type"] = type(exc).__name__
-            fields["error_message"] = str(exc)
-        log_event(
-            "http_retry",
-            level="WARNING",
-            message=f"  [{summary}，{wait:.1f}s 后重试 {attempt}/{MAX_RETRIES}]",
-            url=url,
-            attempt=attempt,
-            max_retries=MAX_RETRIES,
-            wait_seconds=round(wait, 3),
-            reason=reason,
-            **fields,
-        )
-        log_metric("http_retries_total", source=self.source_name, reason=reason)
-
     def get_html(self, path: str, *, referer: str | None = None) -> str:
         """GET 详情页 HTML（执法文书正文在服务端渲染页面中）。"""
         url = path if path.startswith("http") else f"{BASE_URL}{path.lstrip('/')}"
@@ -176,7 +149,9 @@ class HumanLikeClient:
                 if self._is_blocked(response):
                     wait = RETRY_BACKOFF_BASE * attempt + random.uniform(2, 6)
                     if attempt < MAX_RETRIES:
-                        self._record_retry(
+                        record_http_retry(
+                            source=self.source_name,
+                            max_retries=MAX_RETRIES,
                             url=url,
                             attempt=attempt,
                             wait=wait,
@@ -195,7 +170,9 @@ class HumanLikeClient:
                 last_error = exc
                 wait = RETRY_BACKOFF_BASE * attempt + random.uniform(1, 4)
                 if attempt < MAX_RETRIES:
-                    self._record_retry(
+                    record_http_retry(
+                        source=self.source_name,
+                        max_retries=MAX_RETRIES,
                         url=url,
                         attempt=attempt,
                         wait=wait,
@@ -244,7 +221,9 @@ class HumanLikeClient:
                         close()
                     wait = RETRY_BACKOFF_BASE * attempt + random.uniform(2, 6)
                     if attempt < MAX_RETRIES:
-                        self._record_retry(
+                        record_http_retry(
+                            source=self.source_name,
+                            max_retries=MAX_RETRIES,
                             url=url,
                             attempt=attempt,
                             wait=wait,
@@ -275,7 +254,9 @@ class HumanLikeClient:
                         if isinstance(exc, RetryableContentError)
                         else FailureReason.NETWORK_REQUEST_EXCEPTION
                     )
-                    self._record_retry(
+                    record_http_retry(
+                        source=self.source_name,
+                        max_retries=MAX_RETRIES,
                         url=url,
                         attempt=attempt,
                         wait=wait,
@@ -312,7 +293,9 @@ class HumanLikeClient:
                 if self._is_blocked(response):
                     wait = RETRY_BACKOFF_BASE * attempt + random.uniform(2, 6)
                     if attempt < MAX_RETRIES:
-                        self._record_retry(
+                        record_http_retry(
+                            source=self.source_name,
+                            max_retries=MAX_RETRIES,
                             url=url,
                             attempt=attempt,
                             wait=wait,
@@ -344,7 +327,9 @@ class HumanLikeClient:
                         if isinstance(exc, ValueError)
                         else FailureReason.NETWORK_REQUEST_EXCEPTION
                     )
-                    self._record_retry(
+                    record_http_retry(
+                        source=self.source_name,
+                        max_retries=MAX_RETRIES,
                         url=url,
                         attempt=attempt,
                         wait=wait,

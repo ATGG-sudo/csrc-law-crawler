@@ -6,6 +6,7 @@ import json
 import os
 from pathlib import Path
 import shutil
+import time
 from typing import Any
 
 from .locking import acquire_output_lock, lock_depth, path_requires_lock
@@ -132,6 +133,19 @@ def publish_json_bundle(documents: dict[Path, Any]) -> None:
                     path.unlink()
 
 
+def _replace_directory(source: Path, target: Path) -> None:
+    """Retry transient Windows/Drvfs sharing violations during a directory rename."""
+    attempts = 8
+    for attempt in range(attempts):
+        try:
+            os.replace(source, target)
+            return
+        except PermissionError:
+            if attempt == attempts - 1:
+                raise
+            time.sleep(min(0.25 * (2**attempt), 2.0))
+
+
 def publish_directory_atomic(staged: Path, target: Path) -> None:
     """Replace one generated directory and restore the last-known-good copy on error."""
     if not staged.is_dir():
@@ -146,14 +160,15 @@ def publish_directory_atomic(staged: Path, target: Path) -> None:
         moved_target = False
         try:
             if target.exists():
-                os.replace(target, backup)
+                _replace_directory(target, backup)
                 moved_target = True
-            os.replace(staged, target)
+            _replace_directory(staged, target)
         except BaseException:
-            if target.exists():
-                shutil.rmtree(target)
-            if moved_target and backup.exists():
-                os.replace(backup, target)
+            # If moving the original target failed, it is still the last-known-good
+            # publication and must never be removed. If it moved successfully but
+            # staging failed, restore it only into the now-empty target path.
+            if moved_target and backup.exists() and not target.exists():
+                _replace_directory(backup, target)
             raise
         else:
             if backup.exists():
