@@ -322,9 +322,7 @@ def catalog_superseded_by() -> dict[str, list[dict[str, Any]]]:
                 "source": relation.get("source"),
                 "rule_id": relation.get("rule_id"),
                 "confidence": relation.get("confidence"),
-                "effective_date": (relation.get("evidence") or {}).get(
-                    "effective_date"
-                ),
+                "effective_date": (relation.get("evidence") or {}).get("effective_date"),
                 "evidence": relation.get("evidence") or {},
             }
         )
@@ -626,6 +624,8 @@ def normalize_catalog_entity(
         "effectiveness": effectiveness,
         "reference_lifecycle": reference_lifecycle,
         "enforcement_classification": enforcement_classification,
+        "case_id": entity.get("case_id"),
+        "document_role": entity.get("document_role"),
         "superseded_by": superseded_by,
         "metadata": metadata,
         "preferred_source": {
@@ -876,6 +876,8 @@ def normalize_catalog(
                     "category"
                 ),
                 "enforcement_subtype": (doc.get("enforcement_classification") or {}).get("subtype"),
+                "case_id": doc.get("case_id"),
+                "document_role": doc.get("document_role"),
                 "source_system": (doc.get("preferred_source") or {}).get("system"),
                 "source_file": relative_to_output(path),
                 "file": relative_to_output(out_path),

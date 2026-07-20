@@ -31,6 +31,9 @@ REPORT_FIELDS = [
     "body_hash",
     "asset_sha",
     "source_system",
+    "case_id",
+    "document_role",
+    "duplicate_role",
     "reason",
     "recommended_action",
 ]
@@ -139,6 +142,7 @@ def _json_records(root: Path) -> list[dict[str, Any]]:
         law_id = str(doc.get("id") or path.stem)
         text = str(doc.get("full_text_plain") or "")
         assets = doc.get("assets") or []
+        sources = doc.get("sources") or []
         records.append(
             {
                 "id": law_id,
@@ -153,7 +157,46 @@ def _json_records(root: Path) -> list[dict[str, Any]]:
                 "asset_shas": sorted(
                     {str(asset.get("sha256") or "") for asset in assets if asset.get("sha256")}
                 ),
+                "source_urls": sorted(
+                    {
+                        str(value)
+                        for value in [
+                            *(source.get("page_url") for source in sources),
+                            *(asset.get("source_url") for asset in assets),
+                            *(
+                                value
+                                for asset in assets
+                                for value in asset.get("source_urls") or []
+                            ),
+                        ]
+                        if value
+                    }
+                ),
+                "local_files": sorted(
+                    {
+                        str(value)
+                        for value in [
+                            *(source.get("local_file") for source in sources),
+                            *(asset.get("local_file") for asset in assets),
+                            *(
+                                value
+                                for asset in assets
+                                for value in asset.get("local_files") or []
+                            ),
+                        ]
+                        if value
+                    }
+                ),
                 "source_system": str((doc.get("preferred_source") or {}).get("system") or ""),
+                "case_id": str(doc.get("case_id") or ""),
+                "document_role": str(doc.get("document_role") or ""),
+                "enforcement": bool(doc.get("enforcement_classification")),
+                "amac_attachment_only": bool(doc.get("sources"))
+                and all(
+                    source.get("system") == "amac"
+                    and str(source.get("record_id") or "").startswith("amac_asset_")
+                    for source in doc.get("sources") or []
+                ),
                 "fileno": str((doc.get("metadata") or {}).get("fileno") or ""),
                 "pub_date": str((doc.get("metadata") or {}).get("pub_date") or ""),
                 "doc": doc,
@@ -204,6 +247,8 @@ def _markdown_records(
                 "body_hash": body_hash,
                 "asset_shas": list(json_record.get("asset_shas") or []),
                 "source_system": str(json_record.get("source_system") or ""),
+                "case_id": str(json_record.get("case_id") or ""),
+                "document_role": str(json_record.get("document_role") or ""),
                 "fileno": str(
                     (json_record.get("doc") or {}).get("metadata", {}).get("fileno") or ""
                 ),
@@ -262,6 +307,7 @@ def _row(
     recommended_action: str,
     body_hash: str = "",
     asset_sha: str = "",
+    duplicate_role: str = "",
 ) -> dict[str, Any]:
     return {
         "kind": kind,
@@ -277,6 +323,9 @@ def _row(
         "body_hash": body_hash or record.get("body_hash") or "",
         "asset_sha": asset_sha,
         "source_system": record.get("source_system") or "",
+        "case_id": record.get("case_id") or "",
+        "document_role": record.get("document_role") or "",
+        "duplicate_role": duplicate_role,
         "reason": reason,
         "recommended_action": recommended_action,
     }
@@ -320,6 +369,73 @@ def _add_group_rows(
                     asset_sha=key if asset_sha_key else "",
                 )
             )
+
+
+def _asset_group_role(records: list[dict[str, Any]]) -> str:
+    case_ids = {str(record.get("case_id") or "") for record in records}
+    case_ids.discard("")
+    roles = {str(record.get("document_role") or "") for record in records}
+    if len(case_ids) == 1 and "service_announcement" in roles and len(roles) > 1:
+        return "case_related_documents"
+    if len(case_ids) == 1 and len(roles) == 1:
+        return "same_document_carrier"
+    if records and all(record.get("amac_attachment_only") for record in records):
+        return "multi_subject_attachment"
+    if len(case_ids) > 1:
+        return "cross_case_shared_asset"
+    return "unclassified_shared_asset"
+
+
+def _add_asset_group_rows(
+    rows: list[dict[str, Any]],
+    groups: list[tuple[str, list[dict[str, Any]]]],
+) -> Counter[str]:
+    role_counts: Counter[str] = Counter()
+    messages = {
+        "case_related_documents": (
+            "info",
+            "同一案件的送达公告与原文书复用附件",
+            "保留两个文书 canonical；依靠 case_id 与 publishes 关系聚合",
+        ),
+        "multi_subject_attachment": (
+            "high",
+            "机构、法定代表人或高管标题不同，但附件为同一份处分文书",
+            "合并附件 canonical 并保留 title_aliases；案件页面关系统一指向合并后文书",
+        ),
+        "same_document_carrier": (
+            "high",
+            "同一案件、同一文书角色以页面和附件两个载体重复建档",
+            "合并为一个 canonical，并保留两个官方来源及标题别名",
+        ),
+        "cross_case_shared_asset": (
+            "high",
+            "不同案件 ID 复用同一附件 sha256",
+            "核实案件划分或附件下载是否串链",
+        ),
+        "unclassified_shared_asset": (
+            "high",
+            "不同 canonical JSON 复用同一附件 sha256，尚无案件角色证据",
+            "核实同一附件是否被拆成多个 canonical id；需要时合并 sources/assets",
+        ),
+    }
+    for index, (sha256, records) in enumerate(groups, start=1):
+        duplicate_role = _asset_group_role(records)
+        role_counts[duplicate_role] += 1
+        severity, reason, action = messages[duplicate_role]
+        for record in records:
+            rows.append(
+                _row(
+                    record,
+                    kind="json_asset_sha",
+                    severity=severity,
+                    group_id=f"json_asset_sha:{index:04d}",
+                    reason=reason,
+                    recommended_action=action,
+                    asset_sha=sha256,
+                    duplicate_role=duplicate_role,
+                )
+            )
+    return role_counts
 
 
 def _filename_collision_groups(
@@ -422,15 +538,44 @@ def build_duplicate_report(root: Path) -> dict[str, Any]:
     for record in json_records:
         for asset_sha in record.get("asset_shas") or []:
             asset_groups[asset_sha].append(record)
-    _add_group_rows(
-        rows,
-        kind="json_asset_sha",
-        severity="high",
-        groups=_duplicate_groups(asset_groups),
-        reason="不同 canonical JSON 复用同一附件 sha256",
-        recommended_action="核实同一附件是否被拆成多个 canonical id；需要时合并 sources/assets",
-        asset_sha_key=True,
+    asset_group_role_counts = _add_asset_group_rows(rows, _duplicate_groups(asset_groups))
+    enforcement_records = [record for record in json_records if record.get("enforcement")]
+    enforcement_asset_groups = _duplicate_groups(
+        _group(
+            [
+                {**record, "group_value": asset_sha}
+                for record in enforcement_records
+                for asset_sha in record.get("asset_shas") or []
+            ],
+            lambda record: record.get("group_value"),
+        )
     )
+    enforcement_source_url_groups = _duplicate_groups(
+        _group(
+            [
+                {**record, "group_value": source_url}
+                for record in enforcement_records
+                for source_url in record.get("source_urls") or []
+            ],
+            lambda record: record.get("group_value"),
+        )
+    )
+    enforcement_local_file_groups = _duplicate_groups(
+        _group(
+            [
+                {**record, "group_value": local_file}
+                for record in enforcement_records
+                for local_file in record.get("local_files") or []
+            ],
+            lambda record: record.get("group_value"),
+        )
+    )
+    enforcement_asset_duplicate_ids = {
+        str(record.get("id") or "")
+        for _, records in enforcement_asset_groups
+        for record in records
+        if record.get("id")
+    }
 
     markdown_h1_groups = _duplicate_groups(
         _group(markdown_records, lambda record: record["normalized_h1"])
@@ -521,6 +666,23 @@ def build_duplicate_report(root: Path) -> dict[str, Any]:
             _group(json_records, lambda record: record["body_hash"])
         ),
         "json_asset_duplicate_groups": _duplicate_group_count(asset_groups),
+        "enforcement_asset_duplicate_groups": len(enforcement_asset_groups),
+        "enforcement_asset_duplicate_canonical_records": len(enforcement_asset_duplicate_ids),
+        "enforcement_asset_duplicate_memberships": sum(
+            len(records) for _, records in enforcement_asset_groups
+        ),
+        "enforcement_source_url_duplicate_groups": len(enforcement_source_url_groups),
+        "enforcement_local_file_duplicate_groups": len(enforcement_local_file_groups),
+        "json_asset_groups_by_role": dict(sorted(asset_group_role_counts.items())),
+        "enforcement_case_related_asset_groups": asset_group_role_counts.get(
+            "case_related_documents", 0
+        ),
+        "unresolved_enforcement_asset_groups": sum(
+            count
+            for role, count in asset_group_role_counts.items()
+            if role in {"multi_subject_attachment", "cross_case_shared_asset"}
+            or role == "same_document_carrier"
+        ),
         "markdown_h1_duplicate_groups": len(markdown_h1_groups),
         "markdown_body_duplicate_groups": _duplicate_group_count(
             _group(markdown_records, lambda record: record["body_hash"])
@@ -540,6 +702,13 @@ def build_duplicate_report(root: Path) -> dict[str, Any]:
 def _decision_for_group(kind: str, rows: list[dict[str, Any]]) -> tuple[str, str]:
     title_keys = {_dedupe_title_key(row.get("title")) for row in rows if row.get("title")}
     title_keys.discard("")
+    duplicate_roles = {str(row.get("duplicate_role") or "") for row in rows}
+    if kind == "json_asset_sha" and duplicate_roles == {"case_related_documents"}:
+        return "keep", "同一案件内的送达公告与原文书是不同文书"
+    if kind == "json_asset_sha" and duplicate_roles == {"multi_subject_attachment"}:
+        return "auto_merge", "同一处分附件仅因机构与人员标题被拆分"
+    if kind == "json_asset_sha" and duplicate_roles == {"same_document_carrier"}:
+        return "auto_merge", "同一案件同一文书的页面与附件载体重复"
     if kind in {"json_body", "json_asset_sha"} and len(title_keys) == 1:
         return "auto_merge", "强重复且标题等价"
     if kind in {"json_body", "markdown_body"}:
@@ -572,6 +741,23 @@ def build_dedupe_plan(report: dict[str, Any]) -> dict[str, Any]:
                 "reason": reason,
                 "ids": [str(row.get("id") or "") for row in rows if row.get("id")],
                 "titles": sorted({str(row.get("title") or "") for row in rows if row.get("title")}),
+                "case_ids": sorted(
+                    {str(row.get("case_id") or "") for row in rows if row.get("case_id")}
+                ),
+                "document_roles": sorted(
+                    {
+                        str(row.get("document_role") or "")
+                        for row in rows
+                        if row.get("document_role")
+                    }
+                ),
+                "duplicate_roles": sorted(
+                    {
+                        str(row.get("duplicate_role") or "")
+                        for row in rows
+                        if row.get("duplicate_role")
+                    }
+                ),
                 "rows": len(rows),
             }
         )

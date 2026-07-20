@@ -167,11 +167,70 @@ class DuplicateAuditTests(unittest.TestCase):
                     "body_hash",
                     "asset_sha",
                     "source_system",
+                    "case_id",
+                    "document_role",
+                    "duplicate_role",
                     "reason",
                     "recommended_action",
                 },
                 set(row),
             )
+
+    def test_asset_duplicate_plan_keeps_case_related_documents(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            docs = [
+                (
+                    "law_notice",
+                    "纪律处分决定书送达公告（某机构）",
+                    "service_announcement",
+                    "amac_notice",
+                ),
+                (
+                    "law_decision",
+                    "纪律处分决定书（某机构）",
+                    "disciplinary_decision",
+                    "amac_asset_decision",
+                ),
+            ]
+            for law_id, title, role, record_id in docs:
+                _write_json(
+                    root / "canonical" / "json" / f"{law_id}.json",
+                    {
+                        "id": law_id,
+                        "title": title,
+                        "case_id": "case_same",
+                        "document_role": role,
+                        "enforcement_classification": {
+                            "category": "penalties",
+                            "subtype": "disciplinary_decision",
+                        },
+                        "content_status": "full_text",
+                        "metadata": {"pub_date": "2023-01-10"},
+                        "preferred_source": {"system": "amac"},
+                        "sources": [{"system": "amac", "record_id": record_id}],
+                        "full_text_plain": title * 8,
+                        "assets": [{"sha256": "shared-case-pdf"}],
+                    },
+                )
+            _write_json(
+                root / "work" / "catalog" / "markdown_manifest.json",
+                {"items": []},
+            )
+
+            report = build_duplicate_report(root)
+            plan = build_dedupe_plan(report)
+
+        asset_rows = [row for row in report["rows"] if row["kind"] == "json_asset_sha"]
+        self.assertEqual({"case_related_documents"}, {row["duplicate_role"] for row in asset_rows})
+        self.assertEqual(1, report["summary"]["enforcement_case_related_asset_groups"])
+        self.assertEqual(1, report["summary"]["enforcement_asset_duplicate_groups"])
+        self.assertEqual(
+            2,
+            report["summary"]["enforcement_asset_duplicate_canonical_records"],
+        )
+        asset_group = next(group for group in plan["groups"] if group["kind"] == "json_asset_sha")
+        self.assertEqual("keep", asset_group["decision"])
 
 
 if __name__ == "__main__":

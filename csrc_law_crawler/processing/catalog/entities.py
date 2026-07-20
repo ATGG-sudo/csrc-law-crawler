@@ -4,16 +4,22 @@ from __future__ import annotations
 
 from collections import defaultdict
 from datetime import date
+from functools import lru_cache
 import hashlib
 import re
 from typing import Any
 
 from asset_text import extract_local_asset_text
-from catalog_rules import MATCH_AMAC_INTERNAL_TITLE_DATE
+from catalog_rules import (
+    MATCH_AMAC_INTERNAL_TITLE_DATE,
+    MATCH_AMAC_PARENT_ATTACHMENT_SAME_DOCUMENT,
+)
 from catalog_services import CatalogMatcher
 from csrc_law_crawler.sources.evidence import canonical_final_url
 from parser import repair_known_neris_mojibake
 from storage import output_path, utc_now_iso
+
+from .classification import disciplinary_penalty_subtype
 
 from .identity import (
     ATTACHMENT_TEXT_SIGNAL_RE,
@@ -314,9 +320,7 @@ def _merge_record_metadata(
     ):
         target["status"] = source_status
         entity["status"] = source_status
-    if entity.get("document_type") in (None, "", "unknown") and target.get(
-        "document_type"
-    ):
+    if entity.get("document_type") in (None, "", "unknown") and target.get("document_type"):
         entity["document_type"] = target["document_type"]
 
 
@@ -365,8 +369,13 @@ def _source_file_sha256(local_file: Any) -> str:
     path = output_path(local_file_text)
     if not path.exists() or not path.is_file() or path.suffix.lower() == ".json":
         return ""
+    return _path_sha256(path.as_posix())
+
+
+@lru_cache(maxsize=None)
+def _path_sha256(path_text: str) -> str:
     digest = hashlib.sha256()
-    with path.open("rb") as f:
+    with open(path_text, "rb") as f:
         for chunk in iter(lambda: f.read(1024 * 1024), b""):
             digest.update(chunk)
     return digest.hexdigest()
@@ -488,6 +497,18 @@ def _merge_catalog_entity(
         kept["preferred_content"] = dict(removed.get("preferred_content") or {})
 
     metadata = kept.setdefault("metadata", {})
+    if reason == "same_enforcement_attachment_sha":
+        title_aliases = {
+            str(title)
+            for title in [
+                kept.get("title"),
+                removed.get("title"),
+                *((kept.get("metadata") or {}).get("title_aliases") or []),
+                *((removed.get("metadata") or {}).get("title_aliases") or []),
+            ]
+            if title
+        }
+        metadata["title_aliases"] = sorted(title_aliases)
     merged = metadata.setdefault("merged_catalog_entities", [])
     merged.append(
         {
@@ -567,6 +588,61 @@ def _asset_duplicate_groups(entities: dict[str, dict[str, Any]]) -> dict[str, li
         for sha256 in _entity_asset_shas(entity):
             groups[sha256].append(entity_id)
     return {sha256: ids for sha256, ids in groups.items() if len(ids) > 1}
+
+
+def _is_amac_enforcement_attachment(entity: dict[str, Any]) -> bool:
+    sources = entity.get("sources") or []
+    amac_sources = [source for source in sources if source.get("system") == "amac"]
+    if not amac_sources or len(amac_sources) != len(sources):
+        return False
+    if not all(
+        str(source.get("record_id") or "").startswith("amac_asset_") for source in amac_sources
+    ):
+        return False
+    title = str(entity.get("title") or "")
+    if disciplinary_penalty_subtype(title):
+        return True
+    return any(
+        source.get("web_category_leaf") in {"disciplinary_person", "disciplinary_institution"}
+        and source.get("page_role") == "case_document"
+        for source in amac_sources
+    )
+
+
+def _merge_enforcement_attachment_groups(
+    entities: dict[str, dict[str, Any]],
+    source_to_entity: dict[tuple[str, str], str],
+    matches: dict[str, dict[str, Any]],
+) -> list[dict[str, Any]]:
+    merged: list[dict[str, Any]] = []
+    for entity_ids in _asset_duplicate_groups(entities).values():
+        partitions: dict[tuple[str, str], list[str]] = defaultdict(list)
+        for entity_id in entity_ids:
+            entity = entities.get(entity_id)
+            if not entity or not _is_amac_enforcement_attachment(entity):
+                continue
+            subtype = disciplinary_penalty_subtype(entity.get("title")) or "other"
+            pub_date = str((entity.get("metadata") or {}).get("pub_date") or "")[:10]
+            partitions[(subtype, pub_date)].append(entity_id)
+        for matching_ids in partitions.values():
+            if len(matching_ids) < 2:
+                continue
+            kept_id = _choose_kept_entity_id(matching_ids, entities)
+            for removed_id in sorted(
+                entity_id for entity_id in matching_ids if entity_id != kept_id
+            ):
+                if removed_id in entities:
+                    merged.append(
+                        _merge_catalog_entity(
+                            entities=entities,
+                            source_to_entity=source_to_entity,
+                            matches=matches,
+                            kept_id=kept_id,
+                            removed_id=removed_id,
+                            reason="same_enforcement_attachment_sha",
+                        )
+                    )
+    return merged
 
 
 def _source_url_duplicate_groups(
@@ -673,6 +749,12 @@ def deduplicate_catalog_entities(
             "same_fileno_date_equivalent_title",
         )
     )
+    enforcement_attachment_merges = _merge_enforcement_attachment_groups(
+        entities,
+        source_to_entity,
+        matches,
+    )
+    merged_entities.extend(enforcement_attachment_merges)
     merged_entities.extend(
         _merge_equivalent_groups(
             entities,
@@ -705,6 +787,7 @@ def deduplicate_catalog_entities(
         "schema_version": 1,
         "updated_at": utc_now_iso(),
         "merged": len(merged_entities),
+        "enforcement_attachment_merges": len(enforcement_attachment_merges),
         "content_repairs_count": len(content_repairs),
         "merged_entities": merged_entities,
         "content_repairs": content_repairs,
@@ -735,6 +818,106 @@ def _find_existing_amac_entity(
         if not left_org or not right_org or left_org == right_org:
             return candidate_entity_id
     return None
+
+
+def _carrier_title_key(value: Any) -> str:
+    title = re.sub(
+        r"[（(][^（）()]*中基协字[^（）()]*[）)]",
+        "",
+        str(value or ""),
+    )
+    return normalize_title(title)
+
+
+def _is_self_regulatory_measure_record(record: dict[str, Any]) -> bool:
+    leaf = str(record.get("web_category_leaf") or "")
+    page_url = str(record.get("page_url") or "")
+    return leaf in {"self_regulatory_measure", "自律措施"} or "/zlgl/zlcs/" in page_url
+
+
+def _same_document_carrier_parent(
+    record: dict[str, Any],
+    *,
+    records_by_id: dict[str, dict[str, Any]],
+    source_to_entity: dict[tuple[str, str], str],
+) -> tuple[str, dict[str, Any]] | None:
+    parent_record_id = str(record.get("parent_record_id") or "")
+    if not parent_record_id:
+        return None
+    parent = records_by_id.get(parent_record_id)
+    parent_entity_id = source_to_entity.get(("amac", parent_record_id))
+    if not parent or not parent_entity_id:
+        return None
+    parent_title = str((parent.get("metadata") or {}).get("name") or "")
+    child_title = str((record.get("metadata") or {}).get("name") or "")
+    if "送达公告" in parent_title or "公告送达" in parent_title:
+        return None
+    parent_assets = parent.get("assets") or []
+    if len(parent_assets) != 1 or str(parent_assets[0].get("asset_id") or "") != str(
+        record.get("record_id") or ""
+    ):
+        return None
+    parent_date = str((parent.get("metadata") or {}).get("pub_date") or "")[:10]
+    child_date = str((record.get("metadata") or {}).get("pub_date") or "")[:10]
+    if not parent_date or parent_date != child_date:
+        return None
+    parent_subtype = disciplinary_penalty_subtype(parent_title)
+    child_subtype = disciplinary_penalty_subtype(child_title)
+    same_disciplinary_stage = bool(
+        parent_subtype
+        and parent_subtype == child_subtype
+        and parent.get("page_role") == "case_document"
+        and record.get("page_role") == "case_document"
+    )
+    same_self_regulatory_title = (
+        _is_self_regulatory_measure_record(parent)
+        and _is_self_regulatory_measure_record(record)
+        and _carrier_title_key(parent_title) == _carrier_title_key(child_title)
+    )
+    if not same_disciplinary_stage and not same_self_regulatory_title:
+        return None
+    return parent_entity_id, parent
+
+
+def _merge_same_document_carrier(
+    record: dict[str, Any],
+    *,
+    parent_entity_id: str,
+    parent_record: dict[str, Any],
+    entities: dict[str, dict[str, Any]],
+    source_to_entity: dict[tuple[str, str], str],
+) -> dict[str, Any]:
+    entity = entities[parent_entity_id]
+    _append_record_source(entity, record, role="official_attachment_copy")
+    _append_record_assets(entity, record)
+    _prefer_longer_record_content(entity, record)
+    _merge_record_metadata(entity, record)
+    metadata = entity.setdefault("metadata", {})
+    metadata["title_aliases"] = sorted(
+        {
+            str(title)
+            for title in [
+                entity.get("title"),
+                (record.get("metadata") or {}).get("name"),
+                *(metadata.get("title_aliases") or []),
+            ]
+            if title
+        }
+    )
+    source_to_entity[("amac", record["record_id"])] = parent_entity_id
+    subtype = disciplinary_penalty_subtype(entity.get("title")) or "self_regulatory_measure"
+    return {
+        "match_status": "same_document_carrier",
+        "neris_id": None,
+        "canonical_id": parent_entity_id,
+        "match_method": "amac_parent_attachment_same_document",
+        "match_rule_id": MATCH_AMAC_PARENT_ATTACHMENT_SAME_DOCUMENT.rule_id,
+        "confidence": MATCH_AMAC_PARENT_ATTACHMENT_SAME_DOCUMENT.confidence,
+        "evidence": [
+            f"AMAC单附件与父页面为同一{subtype}",
+            f"parent_source_record_id={parent_record['record_id']}",
+        ],
+    }
 
 
 def _merge_amac_record(
@@ -798,8 +981,24 @@ def _match_amac_records(
 ) -> dict[str, dict[str, Any]]:
     amac_entity_index: dict[str, list[tuple[str, dict[str, Any]]]] = defaultdict(list)
     matches: dict[str, dict[str, Any]] = {}
+    records_by_id = {str(record.get("record_id") or ""): record for record in amac_records}
 
     for record in amac_records:
+        carrier_parent = _same_document_carrier_parent(
+            record,
+            records_by_id=records_by_id,
+            source_to_entity=source_to_entity,
+        )
+        if carrier_parent:
+            parent_entity_id, parent_record = carrier_parent
+            matches[record["record_id"]] = _merge_same_document_carrier(
+                record,
+                parent_entity_id=parent_entity_id,
+                parent_record=parent_record,
+                entities=entities,
+                source_to_entity=source_to_entity,
+            )
+            continue
         matches[record["record_id"]] = _merge_amac_record(
             record,
             matcher=matcher,

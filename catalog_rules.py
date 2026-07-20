@@ -162,6 +162,12 @@ MATCH_AMAC_INTERNAL_TITLE_DATE = CatalogRule(
     0.95,
     ("normalized_title", "pub_date", "distance_days"),
 )
+MATCH_AMAC_PARENT_ATTACHMENT_SAME_DOCUMENT = CatalogRule(
+    "match.amac_parent_attachment_same_document",
+    "Merge a single AMAC case attachment into its non-delivery parent when both represent the same instrument.",
+    1.0,
+    ("parent_source_record_id", "attachment_source_record_id", "document_subtype", "pub_date"),
+)
 MATCH_AMBIGUOUS_TITLE = CatalogRule(
     "match.ambiguous_normalized_title",
     "Mark AMAC records ambiguous when multiple NERIS records share the normalized title.",
@@ -339,6 +345,7 @@ MATCHING_RULES = (
     MATCH_TITLE_DATE,
     MATCH_UNIQUE_TITLE,
     MATCH_AMAC_INTERNAL_TITLE_DATE,
+    MATCH_AMAC_PARENT_ATTACHMENT_SAME_DOCUMENT,
     MATCH_AMBIGUOUS_TITLE,
 )
 

@@ -78,6 +78,8 @@ class CatalogEntity:
     metadata: JsonObject
     preferred_content: JsonObject
     sources: list[JsonObject]
+    case_id: str | None = None
+    document_role: str | None = None
 
 
 @dataclass(frozen=True)
@@ -93,6 +95,8 @@ class CanonicalLaw:
     sources: list[JsonObject]
     full_text_plain: str
     full_text_markdown: str
+    case_id: str | None = None
+    document_role: str | None = None
 
 
 @dataclass(frozen=True)
@@ -307,6 +311,8 @@ CATALOG_ENTITY_SCHEMA = _object(
         "material_classification": MATERIAL_CLASSIFICATION_REF,
         "enforcement_classification": ENFORCEMENT_CLASSIFICATION_SCHEMA,
         "reference_lifecycle": REFERENCE_LIFECYCLE_SCHEMA,
+        "case_id": NULLABLE_STRING,
+        "document_role": NULLABLE_STRING,
         "metadata": OBJECT,
         "preferred_content": OBJECT,
         "sources": {"type": "array", "items": OBJECT},
@@ -339,6 +345,8 @@ CANONICAL_LAW_SCHEMA = _object(
         "material_classification": MATERIAL_CLASSIFICATION_REF,
         "enforcement_classification": ENFORCEMENT_CLASSIFICATION_SCHEMA,
         "reference_lifecycle": REFERENCE_LIFECYCLE_SCHEMA,
+        "case_id": NULLABLE_STRING,
+        "document_role": NULLABLE_STRING,
         "metadata": OBJECT,
         "preferred_source": OBJECT,
         "sources": {"type": "array", "items": OBJECT},

@@ -19,6 +19,7 @@ from csrc_law_crawler.processing.catalog import identity as _catalog_identity
 from csrc_law_crawler.processing.catalog import manifest as _catalog_manifest_helpers
 from csrc_law_crawler.processing.catalog import matching as _catalog_matching
 from csrc_law_crawler.processing.catalog import relations as _catalog_relations
+from csrc_law_crawler.processing.catalog.cases import annotate_enforcement_cases
 from csrc_law_crawler.processing.catalog.classification import (
     enforcement_classification_for,
     load_classification_overrides,
@@ -505,6 +506,7 @@ def build_catalog(*, clean: bool = True) -> dict[str, Any]:
             material_classification=material,
             finalized_by=finalized_by_entity.get(entity_id),
         )
+    enforcement_case_summary = annotate_enforcement_cases(entities, relations)
     review_items = _review_queue_items(
         amac_records,
         source_to_entity=source_to_entity,
@@ -529,6 +531,7 @@ def build_catalog(*, clean: bool = True) -> dict[str, Any]:
     manifest["multi_source_rule_records"] = multi_source_counts.get("rule", 0)
     manifest["multi_source_reference_records"] = multi_source_counts.get("reference", 0)
     manifest["material_lane_counts"] = dict(sorted(material_counts.items()))
+    manifest["enforcement_cases"] = enforcement_case_summary
 
     writer.write_entities(catalog_laws_dir(), entities)
     writer.write_source_matches(source_matches_path(), source_to_entity, matches)

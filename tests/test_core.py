@@ -27,6 +27,7 @@ from build_catalog import (
     _catalog_manifest_items,
     _merge_multi_source_rules,
     _merge_record_metadata,
+    _match_amac_records,
     deduplicate_catalog_entities,
     _record_plain_text,
     _review_queue_items,
@@ -51,11 +52,12 @@ from catalog_rules import (
     classify_amac_document,
     confidence_band,
 )
-from catalog_services import CatalogRelationIngestor
+from catalog_services import CatalogMatcher, CatalogRelationIngestor
+from csrc_law_crawler.processing.catalog.cases import annotate_enforcement_cases
 from client import HumanLikeClient
 from download_assets import _normalized_law_files
 from download_utils import DownloadTooLargeError, read_binary_response
-from export_markdown_catalog import bucket_for_document
+from export_markdown_catalog import bucket_for_document, build_catalog_markdown
 from models import JSON_SCHEMAS, schema_snapshot_files, validate_model
 from normalize_catalog import (
     _merge_assets,
@@ -527,6 +529,327 @@ class CatalogMatchingTests(unittest.TestCase):
         self.assertEqual(kept_id, source_to_entity[("amac", "a2")])
         self.assertEqual("same_asset_equivalent_title", result["merged_entities"][0]["reason"])
 
+    def test_catalog_dedupe_merges_multi_subject_enforcement_attachments(self) -> None:
+        entities: dict[str, dict[str, Any]] = {
+            "law_institution": {
+                "id": "law_institution",
+                "title": "纪律处分事先告知书（某基金管理有限公司）",
+                "metadata": {
+                    "name": "纪律处分事先告知书（某基金管理有限公司）",
+                    "pub_date": "2023-01-10",
+                },
+                "preferred_content": {"plain_text": "同一份处分文书正文"},
+                "assets": [{"sha256": "same-enforcement-pdf"}],
+                "sources": [
+                    {
+                        "system": "amac",
+                        "record_id": "amac_asset_institution",
+                        "page_role": "case_document",
+                    }
+                ],
+            },
+            "law_person": {
+                "id": "law_person",
+                "title": "纪律处分事先告知书（张某）",
+                "metadata": {
+                    "name": "纪律处分事先告知书（张某）",
+                    "pub_date": "2023-01-10",
+                },
+                "preferred_content": {"plain_text": "同一份处分文书正文"},
+                "assets": [{"sha256": "same-enforcement-pdf"}],
+                "sources": [
+                    {
+                        "system": "amac",
+                        "record_id": "amac_asset_person",
+                        "page_role": "case_document",
+                    }
+                ],
+            },
+        }
+        source_to_entity = {
+            ("amac", "amac_asset_institution"): "law_institution",
+            ("amac", "amac_asset_person"): "law_person",
+        }
+
+        result = deduplicate_catalog_entities(entities, source_to_entity, {})
+
+        self.assertEqual(1, len(entities))
+        kept_id = next(iter(entities))
+        self.assertEqual(kept_id, source_to_entity[("amac", "amac_asset_institution")])
+        self.assertEqual(kept_id, source_to_entity[("amac", "amac_asset_person")])
+        self.assertEqual(
+            "same_enforcement_attachment_sha",
+            result["merged_entities"][0]["reason"],
+        )
+        self.assertEqual(
+            [
+                "纪律处分事先告知书（张某）",
+                "纪律处分事先告知书（某基金管理有限公司）",
+            ],
+            entities[kept_id]["metadata"]["title_aliases"],
+        )
+
+    def test_catalog_dedupe_keeps_delivery_notice_and_attached_decision(self) -> None:
+        entities: dict[str, dict[str, Any]] = {
+            "law_notice": {
+                "id": "law_notice",
+                "title": "纪律处分决定书送达公告（某基金管理有限公司）",
+                "metadata": {
+                    "name": "纪律处分决定书送达公告（某基金管理有限公司）",
+                    "pub_date": "2023-01-10",
+                },
+                "preferred_content": {"plain_text": "送达公告正文"},
+                "assets": [{"sha256": "shared-pdf"}],
+                "sources": [
+                    {
+                        "system": "amac",
+                        "record_id": "amac_notice",
+                        "page_role": "case_document",
+                    }
+                ],
+            },
+            "law_decision": {
+                "id": "law_decision",
+                "title": "纪律处分决定书（某基金管理有限公司）",
+                "metadata": {
+                    "name": "纪律处分决定书（某基金管理有限公司）",
+                    "pub_date": "2023-01-10",
+                },
+                "preferred_content": {"plain_text": "原处分决定书正文"},
+                "assets": [{"sha256": "shared-pdf"}],
+                "sources": [
+                    {
+                        "system": "amac",
+                        "record_id": "amac_asset_decision",
+                        "page_role": "case_document",
+                    }
+                ],
+            },
+        }
+        source_to_entity = {
+            ("amac", "amac_notice"): "law_notice",
+            ("amac", "amac_asset_decision"): "law_decision",
+        }
+
+        result = deduplicate_catalog_entities(entities, source_to_entity, {})
+
+        self.assertEqual(["law_decision", "law_notice"], sorted(entities))
+        self.assertEqual([], result["merged_entities"])
+
+    def test_amac_matching_merges_same_document_parent_and_attachment_carriers(self) -> None:
+        parent = {
+            "system": "amac",
+            "record_id": "amac_parent",
+            "metadata": {
+                "name": "国贸资管纪律处分决定书",
+                "pub_date": "2019-01-10",
+            },
+            "plain_text": "页面正文",
+            "local_file": "raw/amac_parent.json",
+            "page_url": "https://example.test/parent.html",
+            "assets": [{"asset_id": "amac_asset_decision", "sha256": "same-pdf"}],
+            "parent_record_id": None,
+            "page_role": "case_document",
+            "web_category_leaf": "disciplinary_institution",
+        }
+        child = {
+            "system": "amac",
+            "record_id": "amac_asset_decision",
+            "metadata": {
+                "name": "纪律处分决定书（厦门国贸资产管理有限公司）",
+                "pub_date": "2019-01-10",
+            },
+            "plain_text": "附件中的完整处分决定书正文",
+            "local_file": "raw/decision.pdf",
+            "page_url": "https://example.test/decision.pdf",
+            "assets": [],
+            "parent_record_id": "amac_parent",
+            "page_role": "case_document",
+            "web_category_leaf": "disciplinary_institution",
+        }
+        matcher = CatalogMatcher(
+            {},
+            lambda _record, _index: (
+                None,
+                "new_to_neris",
+                1.0,
+                [],
+                "match.neris_title_absent",
+            ),
+        )
+        entities: dict[str, dict[str, Any]] = {}
+        source_to_entity: dict[tuple[str, str], str] = {}
+
+        matches = _match_amac_records(
+            [parent, child],
+            matcher,
+            entities,
+            source_to_entity,
+        )
+
+        self.assertEqual(1, len(entities))
+        self.assertEqual(
+            source_to_entity[("amac", "amac_parent")],
+            source_to_entity[("amac", "amac_asset_decision")],
+        )
+        entity = next(iter(entities.values()))
+        self.assertEqual(
+            ["official_text", "official_attachment_copy"],
+            [source["role"] for source in entity["sources"]],
+        )
+        self.assertEqual("same_document_carrier", matches["amac_asset_decision"]["match_status"])
+        self.assertEqual(
+            [
+                "国贸资管纪律处分决定书",
+                "纪律处分决定书（厦门国贸资产管理有限公司）",
+            ],
+            entity["metadata"]["title_aliases"],
+        )
+
+    def test_amac_matching_does_not_merge_delivery_notice_with_attachment(self) -> None:
+        parent = {
+            "system": "amac",
+            "record_id": "amac_notice",
+            "metadata": {
+                "name": "纪律处分决定书送达公告（某机构）",
+                "pub_date": "2023-01-10",
+            },
+            "plain_text": "送达公告正文",
+            "local_file": "raw/notice.json",
+            "page_url": "https://example.test/notice.html",
+            "assets": [{"asset_id": "amac_asset_decision", "sha256": "same-pdf"}],
+            "parent_record_id": None,
+            "page_role": "case_document",
+            "web_category_leaf": "disciplinary_institution",
+        }
+        child = {
+            "system": "amac",
+            "record_id": "amac_asset_decision",
+            "metadata": {
+                "name": "纪律处分决定书（某机构）",
+                "pub_date": "2023-01-10",
+            },
+            "plain_text": "处分决定书正文",
+            "local_file": "raw/decision.pdf",
+            "page_url": "https://example.test/decision.pdf",
+            "assets": [],
+            "parent_record_id": "amac_notice",
+            "page_role": "case_document",
+            "web_category_leaf": "disciplinary_institution",
+        }
+        matcher = CatalogMatcher(
+            {},
+            lambda _record, _index: (
+                None,
+                "new_to_neris",
+                1.0,
+                [],
+                "match.neris_title_absent",
+            ),
+        )
+
+        entities: dict[str, dict[str, Any]] = {}
+        source_to_entity: dict[tuple[str, str], str] = {}
+        _match_amac_records([parent, child], matcher, entities, source_to_entity)
+
+        self.assertEqual(2, len(entities))
+        self.assertNotEqual(
+            source_to_entity[("amac", "amac_notice")],
+            source_to_entity[("amac", "amac_asset_decision")],
+        )
+
+    def test_amac_matching_merges_self_regulatory_native_breadcrumb_carrier(self) -> None:
+        parent = {
+            "system": "amac",
+            "record_id": "amac_measure",
+            "metadata": {
+                "name": "关于暂停某公司私募基金募集业务的决定",
+                "pub_date": "2020-05-20",
+            },
+            "plain_text": "页面正文",
+            "local_file": "raw/measure.json",
+            "page_url": "https://www.amac.org.cn/zlgl/zlcs/example.html",
+            "assets": [{"asset_id": "amac_asset_measure", "sha256": "measure-pdf"}],
+            "parent_record_id": None,
+            "page_role": "unknown",
+            "web_category_leaf": "自律措施",
+        }
+        child = {
+            "system": "amac",
+            "record_id": "amac_asset_measure",
+            "metadata": {
+                "name": "关于暂停某公司私募基金募集业务的决定（中基协字〔2020〕66号）",
+                "pub_date": "2020-05-20",
+            },
+            "plain_text": "完整决定正文",
+            "local_file": "raw/measure.pdf",
+            "page_url": "https://www.amac.org.cn/zlgl/zlcs/measure.pdf",
+            "assets": [],
+            "parent_record_id": "amac_measure",
+            "page_role": "case_document",
+            "web_category_leaf": "self_regulatory_measure",
+        }
+        matcher = CatalogMatcher(
+            {},
+            lambda _record, _index: (
+                None,
+                "new_to_neris",
+                1.0,
+                [],
+                "match.neris_title_absent",
+            ),
+        )
+        entities: dict[str, dict[str, Any]] = {}
+        source_to_entity: dict[tuple[str, str], str] = {}
+
+        matches = _match_amac_records(
+            [parent, child],
+            matcher,
+            entities,
+            source_to_entity,
+        )
+
+        self.assertEqual(1, len(entities))
+        self.assertEqual("same_document_carrier", matches["amac_asset_measure"]["match_status"])
+
+    def test_enforcement_case_annotation_groups_notice_and_document(self) -> None:
+        entities: dict[str, dict[str, Any]] = {
+            "law_notice": {
+                "id": "law_notice",
+                "title": "纪律处分决定书送达公告（某基金管理有限公司）",
+                "enforcement_classification": {
+                    "category": "penalties",
+                    "subtype": "disciplinary_decision",
+                },
+                "sources": [{"system": "amac", "record_id": "amac_notice"}],
+            },
+            "law_decision": {
+                "id": "law_decision",
+                "title": "纪律处分决定书（某基金管理有限公司）",
+                "enforcement_classification": {
+                    "category": "penalties",
+                    "subtype": "disciplinary_decision",
+                },
+                "sources": [{"system": "amac", "record_id": "amac_asset_decision"}],
+            },
+        }
+        relations = [
+            {
+                "from": "law_notice",
+                "to": "law_decision",
+                "relation": "publishes",
+                "source": "amac.page_attachment",
+            }
+        ]
+
+        summary = annotate_enforcement_cases(entities, relations)
+
+        self.assertEqual(1, summary["case_count"])
+        self.assertEqual(2, summary["document_count"])
+        self.assertEqual(entities["law_notice"]["case_id"], entities["law_decision"]["case_id"])
+        self.assertEqual("service_announcement", entities["law_notice"]["document_role"])
+        self.assertEqual("disciplinary_decision", entities["law_decision"]["document_role"])
+
     def test_catalog_dedupe_merges_same_official_url_and_fills_metadata(self) -> None:
         entities: dict[str, dict[str, Any]] = {
             "law_keep": {
@@ -630,7 +953,9 @@ class CatalogMatchingTests(unittest.TestCase):
         self.assertEqual(["law_order_233", "law_wrapper"], list(entities))
         self.assertEqual("law_order_233", source_to_entity[("csrc_gov_cn", "c233")])
         self.assertEqual("2026-09-01", entities["law_order_233"]["metadata"]["effective_date"])
-        self.assertEqual(["pdf233"], [asset["asset_id"] for asset in entities["law_order_233"]["assets"]])
+        self.assertEqual(
+            ["pdf233"], [asset["asset_id"] for asset in entities["law_order_233"]["assets"]]
+        )
 
     def test_revision_year_merges_late_index_copy_and_keeps_original_date(self) -> None:
         title = "私募投资基金备案指引第3号——私募投资基金变更管理人（2025年修订）"
@@ -1317,6 +1642,8 @@ class CatalogNormalizationTests(unittest.TestCase):
                 {
                     "id": "law_dce",
                     "title": "大连商品交易所套期保值管理办法",
+                    "case_id": "case_fixture",
+                    "document_role": "disciplinary_decision",
                     "document_type": "regulation",
                     "status": "现行有效",
                     "metadata": {
@@ -1347,6 +1674,11 @@ class CatalogNormalizationTests(unittest.TestCase):
 
         self.assertEqual("2022-12-16", doc["metadata"]["effective_date"])
         self.assertEqual(["official_pdf"], [asset["asset_id"] for asset in doc["assets"]])
+        self.assertEqual("case_fixture", doc["case_id"])
+        self.assertEqual("disciplinary_decision", doc["document_role"])
+        markdown = build_catalog_markdown(doc, Path("/tmp/law_dce.md"))
+        self.assertIn('case_id: "case_fixture"', markdown)
+        self.assertIn("| 案件文书角色 | disciplinary_decision |", markdown)
 
     def test_comment_draft_is_reference_even_when_amac_rule_like(self) -> None:
         effectiveness = effectiveness_for(
