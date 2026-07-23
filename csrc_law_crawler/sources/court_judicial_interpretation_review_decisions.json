@@ -1,0 +1,5 @@
+{
+  "schema_version": 1,
+  "description": "最高法司法解释栏目监测复核决定。键可为数字页面ID或 source_record_id；状态使用 controlled、reference_only、ignored 或 closed。",
+  "decisions": {}
+}

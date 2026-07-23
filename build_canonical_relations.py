@@ -59,9 +59,11 @@ def build_canonical_relations() -> dict[str, Any]:
     for path in catalog_files:
         entity = load_json(path, {})
         entity_id = str(entity.get("id") or path.stem)
+        normalized_path = canonical_dir() / "json" / f"{entity_id}.json"
+        normalized = load_json(normalized_path, {}) if normalized_path.exists() else {}
         builder.add_catalog_entity(
-            entity,
-            local_file=relative_to_output(canonical_dir() / "json" / f"{entity_id}.json"),
+            normalized or entity,
+            local_file=relative_to_output(normalized_path),
         )
 
     revisions = load_json(revisions_path(), {})

@@ -1,0 +1,157 @@
+{
+  "schema_version": 1,
+  "description": "最高人民法院公司法司法解释版本与适用范围的来源键审计配置",
+  "documents": [
+    {
+      "document_key": "spc_company_law_interpretation_3_2014",
+      "title": "最高人民法院关于适用《中华人民共和国公司法》若干问题的规定（三）（2014年修正）",
+      "sources": [
+        {
+          "source_system": "court_judicial_interpretation",
+          "upstream_id": "6135:company-law-interpretation-3:2014"
+        },
+        {
+          "source_system": "neris",
+          "record_id": "5b578235ebac4ba799419ae1c7187eb6"
+        }
+      ],
+      "version_family_id": "spc.company_law_interpretation_3",
+      "version_label": "2014年修正",
+      "metadata_overrides": {
+        "edition_label": "2014年修正",
+        "amending_fileno": "法释〔2014〕2号",
+        "pub_date": "2014-02-20",
+        "revision_date": "2014-02-20",
+        "effective_date": "2014-03-01",
+        "decision_date": "2014-02-17",
+        "promulgation_date": "2014-02-20",
+        "official_page_published_at": "2014-02-27 16:26:00"
+      },
+      "metadata_evidence": {
+        "source": "curated.spc_official_page",
+        "official_url": "https://www.court.gov.cn/fabu/xiangqing/6135.html",
+        "note": "审判委员会决定日期、文书公布日期、官网页面发布时间和施行日期分别记录；施行日期不得以页面日期代替。"
+      }
+    },
+    {
+      "document_key": "spc_company_law_interpretation_3_2020",
+      "title": "最高人民法院关于适用《中华人民共和国公司法》若干问题的规定（三）（2020年修正）",
+      "sources": [
+        {
+          "source_system": "court_judicial_interpretation",
+          "upstream_id": "282631:company-law-interpretation-3:2020"
+        }
+      ],
+      "version_family_id": "spc.company_law_interpretation_3",
+      "version_label": "2020年修正",
+      "metadata_overrides": {
+        "edition_label": "2020年修正",
+        "amending_fileno": "法释〔2020〕18号",
+        "revision_date": "2020-12-29",
+        "effective_date": "2021-01-01",
+        "status": "现行有效",
+        "applicability_mode": "conditional",
+        "applicability_note": "条文与现行公司法规定原理一致且不存在冲突时可以继续适用；内容不一致、存在冲突时适用公司法。",
+        "applicability_official_url": "https://www.court.gov.cn/zixun/xiangqing/438551.html"
+      },
+      "metadata_evidence": {
+        "source": "curated.spc_transition_guidance",
+        "official_url": "https://www.court.gov.cn/zixun/xiangqing/438551.html",
+        "note": "最高法明确五部旧公司法司法解释尚未废除，但其条文仅在与现行公司法原理一致且不冲突时继续适用。"
+      }
+    },
+    {
+      "document_key": "spc_company_law_temporal_effect_2024_7",
+      "title": "最高人民法院关于适用《中华人民共和国公司法》时间效力的若干规定",
+      "sources": [
+        {
+          "source_system": "court_judicial_interpretation",
+          "upstream_id": "436481"
+        },
+        {
+          "source_system": "neris",
+          "record_id": "15b55cc9fc144b2aa552cd8034ebce00"
+        }
+      ],
+      "metadata_overrides": {
+        "status": "现行有效"
+      },
+      "metadata_evidence": {
+        "source": "curated.spc_reply_scope",
+        "official_url": "https://www.court.gov.cn/zixun/xiangqing/436481.html",
+        "note": "法释〔2024〕15号仅限缩第四条第一项的特定议题适用范围，不使法释〔2024〕7号整体失效。"
+      }
+    },
+    {
+      "document_key": "spc_company_law_reply_2024_15",
+      "title": "最高人民法院关于《中华人民共和国公司法》第八十八条第一款不溯及适用的批复",
+      "sources": [
+        {
+          "source_system": "court_judicial_interpretation",
+          "upstream_id": "450831"
+        }
+      ]
+    },
+    {
+      "document_key": "spc_company_law_transition_guidance_438551",
+      "title": "最高人民法院民二庭负责人就公司法时间效力的规定答记者问",
+      "sources": [
+        {
+          "source_system": "court_judicial_interpretation",
+          "upstream_id": "438551"
+        }
+      ]
+    }
+  ],
+  "relations": [
+    {
+      "relation_key": "company_law_interpretation_3_2020_supersedes_2014",
+      "from_document": "spc_company_law_interpretation_3_2020",
+      "to_document": "spc_company_law_interpretation_3_2014",
+      "relation": "supersedes",
+      "evidence": {
+        "source": "curated.spc_company_law_interpretation_versions",
+        "official_url": "https://www.court.gov.cn/fabu/xiangqing/282631.html",
+        "scope": "full_version",
+        "version_family_id": "spc.company_law_interpretation_3",
+        "effective_date": "2021-01-01",
+        "basis": "法释〔2020〕18号对公司法司法解释作出修改并自2021年1月1日起施行。",
+        "confidence": 1.0
+      }
+    },
+    {
+      "relation_key": "company_law_reply_2024_15_narrows_rule_2024_7_article_4_item_1",
+      "from_document": "spc_company_law_reply_2024_15",
+      "to_document": "spc_company_law_temporal_effect_2024_7",
+      "relation": "narrows_application_of",
+      "evidence": {
+        "source": "curated.spc_reply_scope",
+        "official_url": "https://www.court.gov.cn/zixun/xiangqing/450831.html",
+        "scope": "provision_issue",
+        "target_provision": "第四条第一项",
+        "target_issue": "公司法第八十八条第一款对未届期股权转让的时间适用",
+        "applicable_fact_window": "仅适用于2024年7月1日之后发生的未届出资期限的股权转让行为",
+        "event_date_operator": "after",
+        "event_date": "2024-07-01",
+        "relation_effective_date": "2024-12-24",
+        "effect_on_target": "remains_current",
+        "confidence": 1.0
+      }
+    },
+    {
+      "relation_key": "company_law_transition_guidance_qualifies_interpretation_3_2020",
+      "from_document": "spc_company_law_transition_guidance_438551",
+      "to_document": "spc_company_law_interpretation_3_2020",
+      "relation": "qualifies_application_of",
+      "evidence": {
+        "source": "curated.spc_transition_guidance",
+        "official_url": "https://www.court.gov.cn/zixun/xiangqing/438551.html",
+        "scope": "reference-only",
+        "applicability_mode": "conditional",
+        "condition": "条文与现行公司法规定原理一致且不存在冲突时可以继续适用；不一致或冲突时适用公司法。",
+        "effect_on_target": "remains_current",
+        "confidence": 1.0
+      }
+    }
+  ]
+}

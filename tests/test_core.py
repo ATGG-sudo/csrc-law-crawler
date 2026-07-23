@@ -54,12 +54,17 @@ from catalog_rules import (
 )
 from catalog_services import CatalogMatcher, CatalogRelationIngestor
 from csrc_law_crawler.processing.catalog.cases import annotate_enforcement_cases
+from csrc_law_crawler.processing.catalog.classification import (
+    load_classification_overrides,
+    material_classification_for,
+)
 from client import HumanLikeClient
 from download_assets import _normalized_law_files
 from download_utils import DownloadTooLargeError, read_binary_response
 from export_markdown_catalog import bucket_for_document, build_catalog_markdown
 from models import JSON_SCHEMAS, schema_snapshot_files, validate_model
 from normalize_catalog import (
+    _classification_review_items,
     _merge_assets,
     effectiveness_for,
     normalize_catalog_entity,
@@ -1491,6 +1496,40 @@ class GoldenFixtureTests(unittest.TestCase):
 
 
 class CatalogNormalizationTests(unittest.TestCase):
+    def test_judicial_interpretation_uses_law_regulation_category(self) -> None:
+        classification = material_classification_for(
+            {
+                "id": "law_spc_interpretation",
+                "title": "最高人民法院司法解释",
+                "document_type": "judicial_interpretation",
+                "status": "现行有效",
+                "material_lane": "rule",
+                "metadata": {},
+                "sources": [
+                    {
+                        "system": "court_judicial_interpretation",
+                        "material_lane": "rule",
+                        "page_url": "https://www.court.gov.cn/fabu/xiangqing/example.html",
+                    }
+                ],
+            }
+        )
+        self.assertEqual("rule", classification["lane"])
+        self.assertEqual("law_regulation", classification["category"])
+
+    def test_curated_spc_rules_use_law_regulation_category(self) -> None:
+        overrides = load_classification_overrides()
+        for canonical_id in (
+            "law_8ab13e2274849c4f4786f692",
+            "law_e1c0e9cd025928c49b7b3b64",
+            "law_fd4fecf044b601003e57ee31",
+        ):
+            with self.subTest(canonical_id=canonical_id):
+                self.assertEqual(
+                    "law_regulation",
+                    overrides[canonical_id]["material_category"],
+                )
+
     def test_normalized_law_full_text_composition_preserves_entry_order(self) -> None:
         plain, markdown = _compose_full_text(
             {"name": "某规则"},
@@ -1565,6 +1604,95 @@ class CatalogNormalizationTests(unittest.TestCase):
             title="某规则",
         )
         self.assertIn("## 第一条\n\n内容。", markdown)
+
+    def test_article_like_court_approval_title_fragment_is_not_a_heading(self) -> None:
+        title = "最高人民法院关于《中华人民共和国公司法》第八十八条第一款不溯及适用的批复"
+        markdown = plain_text_to_markdown(
+            "最高人民法院\n"
+            "关于《中华人民共和国公司法》\n"
+            "第八十八条第一款\n"
+            "不溯及适用的批复\n"
+            "河南省高级人民法院：\n"
+            "2024年7月1日起施行的《中华人民共和国公司法》第八十八条第一款仅适用于"
+            "2024年7月1日之后发生的未届出资期限的股权转让行为。",
+            title=title,
+        )
+        self.assertNotIn("## 第八十八条", markdown)
+        self.assertIn("河南省高级人民法院", markdown)
+        self.assertIn("第八十八条第一款仅适用于", markdown)
+
+    def test_actual_article_still_becomes_heading_after_title_removal(self) -> None:
+        markdown = plain_text_to_markdown(
+            "某办法\n第八十八条 第一款内容。",
+            title="某办法",
+        )
+        self.assertIn("## 第八十八条\n\n第一款内容。", markdown)
+
+    def test_single_line_title_reference_inside_body_is_preserved(self) -> None:
+        markdown = plain_text_to_markdown(
+            "第一条 正文。\n某办法\n第二条 正文。",
+            title="某办法",
+        )
+        self.assertIn("某办法", markdown)
+
+    def test_late_split_title_reference_inside_body_is_preserved(self) -> None:
+        lines = [f"前言第{index}行。" for index in range(20)]
+        lines.extend(["某", "办法", "第二条 正文。"])
+        markdown = plain_text_to_markdown("\n".join(lines), title="某办法")
+        self.assertIn("某办法", markdown)
+
+    def test_manual_override_only_clears_low_provenance_review_reason(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            out_dir = Path(temp_dir)
+
+            def write_doc(doc_id: str, *, basis: str, confidence: float = 1.0) -> dict[str, Any]:
+                save_json(
+                    out_dir / f"{doc_id}.json",
+                    {
+                        "id": doc_id,
+                        "title": "最高人民法院司法解释",
+                        "material_classification": {
+                            "lane": "rule",
+                            "category": "normative_document",
+                            "basis": basis,
+                            "confidence": confidence,
+                        },
+                        "effectiveness": {
+                            "status": "current",
+                            "basis": basis,
+                            "confidence": 1.0,
+                        },
+                        "metadata": {},
+                        "sources": [
+                            {
+                                "page_url": "https://www.court.gov.cn/example.html",
+                                "web_category_provenance": "endpoint_profile",
+                            }
+                        ],
+                    },
+                )
+                return {"file": f"{doc_id}.json"}
+
+            low_provenance = _classification_review_items(
+                [write_doc("law_low_provenance", basis="source_rule_lane")],
+                out_dir=out_dir,
+                as_of="2026-07-23",
+            )
+            self.assertIn("web_taxonomy_low_provenance", low_provenance[0]["reasons"])
+
+            manually_verified = _classification_review_items(
+                [write_doc("law_manual", basis="manual_override")],
+                out_dir=out_dir,
+                as_of="2026-07-23",
+            )
+            self.assertEqual([], manually_verified)
+
+            other_reason_remains = _classification_review_items(
+                [write_doc("law_manual_low_confidence", basis="manual_override", confidence=0.5)],
+                out_dir=out_dir,
+                as_of="2026-07-23",
+            )
+            self.assertEqual(["low_confidence"], other_reason_remains[0]["reasons"])
 
     def test_preface_before_first_article_becomes_heading(self) -> None:
         markdown = plain_text_to_markdown(

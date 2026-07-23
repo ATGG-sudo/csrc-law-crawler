@@ -10,7 +10,11 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import urlsplit
 
-from csrc_law_crawler.sources.registry import validate_registry
+from csrc_law_crawler.sources.registry import (
+    EXPECTED_BASE_ENDPOINT_COUNT,
+    EXPECTED_BASE_PROFILE_COUNT,
+    validate_registry,
+)
 
 
 QUERY_SETS = {
@@ -211,7 +215,11 @@ def build_registry(inspection: dict[str, Any]) -> dict[str, Any]:
             }
         },
     }
-    validate_registry(result)
+    validate_registry(
+        result,
+        expected_endpoint_count=EXPECTED_BASE_ENDPOINT_COUNT,
+        expected_profile_count=EXPECTED_BASE_PROFILE_COUNT,
+    )
     return result
 
 

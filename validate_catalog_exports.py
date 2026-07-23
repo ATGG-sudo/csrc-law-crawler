@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import csv
 from datetime import date
 import json
 import sys
@@ -11,11 +12,16 @@ from typing import Any
 
 from build_canonical_relations import canonical_graph_path
 from csrc_law_crawler.processing.catalog.classification import disciplinary_penalty_subtype
+from csrc_law_crawler.processing.catalog.curated_relations import (
+    load_curated_catalog,
+    resolve_curated_documents,
+)
 from export_markdown_catalog import (
     bucket_for_document,
     catalog_library_dir,
     catalog_library_manifest_path,
     catalog_markdown_manifest_path,
+    directional_relation_summary,
     library_relative_dir_for_document,
 )
 from models import format_model_issues
@@ -36,6 +42,7 @@ from storage import (
     output_path,
     run_with_output_lock,
     save_json,
+    source_matches_path,
     utc_now_iso,
 )
 
@@ -72,6 +79,223 @@ def _iso_date(value: Any) -> date | None:
         return date.fromisoformat(str(value or ""))
     except ValueError:
         return None
+
+
+def _relation_ref_key(
+    *,
+    owner_id: str,
+    direction: str,
+    relation: dict[str, Any],
+) -> tuple[str, str, str, str, str, str, str, str]:
+    counterpart_id = str(relation.get("canonical_id") or "")
+    return (
+        owner_id,
+        direction,
+        counterpart_id,
+        str(relation.get("relation") or ""),
+        str(relation.get("source") or ""),
+        str(relation.get("confidence", 1.0)),
+        str(relation.get("rule_id") or ""),
+        json.dumps(relation.get("evidence") or {}, ensure_ascii=False, sort_keys=True),
+    )
+
+
+def _document_relation_summary(doc: dict[str, Any]) -> tuple[list[str], list[str]]:
+    relations = doc.get("relations") or {}
+    items = [*(relations.get("outgoing") or []), *(relations.get("incoming") or [])]
+    relation_types = sorted(
+        {str(item.get("relation")) for item in items if item.get("relation")}
+    )
+    related_ids = sorted(
+        {str(item.get("canonical_id")) for item in items if item.get("canonical_id")}
+    )
+    return relation_types, related_ids
+
+
+def _has_omnibus_parent_page_prefix(text: str) -> bool:
+    normalized_lead = "".join(str(text or "")[:500].split())
+    return normalized_lead.startswith(
+        "最高人民法院关于修改《最高人民法院关于破产企业国有划拨土地使用权"
+    )
+
+
+def _expected_canonical_relation_refs(
+    catalog_relations: list[dict[str, Any]],
+    normalized_ids: set[str],
+) -> set[tuple[str, str, str, str, str, str, str, str]]:
+    expected: set[tuple[str, str, str, str, str, str, str, str]] = set()
+    for relation in catalog_relations:
+        from_id = str(relation.get("from") or "")
+        to_id = str(relation.get("to") or "")
+        common = {
+            "relation": relation.get("relation"),
+            "source": relation.get("source"),
+            "confidence": relation.get("confidence", 1.0),
+            "evidence": relation.get("evidence") or {},
+        }
+        if relation.get("rule_id"):
+            common["rule_id"] = relation["rule_id"]
+        if from_id in normalized_ids:
+            expected.add(
+                _relation_ref_key(
+                    owner_id=from_id,
+                    direction="outgoing",
+                    relation={"canonical_id": to_id, **common},
+                )
+            )
+        if to_id in normalized_ids:
+            expected.add(
+                _relation_ref_key(
+                    owner_id=to_id,
+                    direction="incoming",
+                    relation={"canonical_id": from_id, **common},
+                )
+            )
+    return expected
+
+
+def _catalog_graph_edge_keys(
+    catalog_relations: list[dict[str, Any]],
+    graph_nodes: set[str],
+) -> set[tuple[str, str, str]]:
+    return {
+        (str(item.get("from")), str(item.get("to")), str(item.get("relation")))
+        for item in catalog_relations
+        if str(item.get("from")) in graph_nodes
+        and str(item.get("to")) in graph_nodes
+    }
+
+
+def _validate_curated_semantics(
+    normalized_docs: dict[str, dict[str, Any]],
+    catalog_relations: list[dict[str, Any]],
+) -> tuple[list[str], dict[str, int]]:
+    issues: list[str] = []
+    payload = load_curated_catalog()
+    source_map = load_json(source_matches_path(), {}).get("by_source") or {}
+    source_to_entity = {
+        tuple(str(source_key).split(":", 1)): str(entity_id)
+        for source_key, entity_id in source_map.items()
+        if ":" in str(source_key)
+    }
+    try:
+        resolved = resolve_curated_documents(source_to_entity, payload)
+    except ValueError as exc:
+        issues.append(f"curated source resolution conflict: {exc}")
+        resolved = {}
+    expected_document_keys = {
+        str(item.get("document_key")) for item in payload.get("documents") or []
+    }
+    missing_document_keys = expected_document_keys - set(resolved)
+    if missing_document_keys:
+        issues.append(
+            "curated source resolution incomplete: "
+            + ", ".join(sorted(missing_document_keys))
+        )
+
+    expected_relations = payload.get("relations") or []
+    resolved_relation_count = 0
+    for spec in expected_relations:
+        from_id = resolved.get(str(spec.get("from_document")))
+        to_id = resolved.get(str(spec.get("to_document")))
+        if not from_id or not to_id:
+            continue
+        matches = [
+            item
+            for item in catalog_relations
+            if str(item.get("from")) == from_id
+            and str(item.get("to")) == to_id
+            and str(item.get("relation")) == str(spec.get("relation"))
+            and (item.get("evidence") or {}).get("curated_relation_key")
+            == spec.get("relation_key")
+        ]
+        if len(matches) != 1:
+            issues.append(
+                f"curated relation {spec.get('relation_key')}: expected 1 edge, got "
+                f"{len(matches)}"
+            )
+        else:
+            resolved_relation_count += 1
+
+    keys = {
+        "old": "spc_company_law_interpretation_3_2014",
+        "new": "spc_company_law_interpretation_3_2020",
+        "rule7": "spc_company_law_temporal_effect_2024_7",
+        "reply15": "spc_company_law_reply_2024_15",
+        "guidance": "spc_company_law_transition_guidance_438551",
+    }
+    docs = {
+        name: normalized_docs.get(resolved.get(document_key, ""), {})
+        for name, document_key in keys.items()
+    }
+    if docs["rule7"]:
+        if (docs["rule7"].get("effectiveness") or {}).get("status") != "current":
+            issues.append("法释〔2024〕7号 must remain current")
+        if docs["rule7"].get("superseded_by"):
+            issues.append("法释〔2024〕7号 must not have superseded_by")
+    if docs["reply15"]:
+        reply_metadata = docs["reply15"].get("metadata") or {}
+        reply_text = str(docs["reply15"].get("full_text_plain") or "")
+        if reply_metadata.get("fileno") != "法释〔2024〕15号":
+            issues.append("法释〔2024〕15号 fileno mismatch")
+        if "2024年7月1日之后发生的未届出资期限的股权转让行为" not in reply_text:
+            issues.append("法释〔2024〕15号 missing official temporal boundary text")
+    if docs["old"] and docs["new"]:
+        old_status = (docs["old"].get("effectiveness") or {}).get("status")
+        new_status = (docs["new"].get("effectiveness") or {}).get("status")
+        if old_status != "historical" or new_status != "current":
+            issues.append(
+                "公司法解释（三）version effectiveness mismatch: "
+                f"2014={old_status}, 2020={new_status}"
+            )
+        old_family = (docs["old"].get("revision_ref") or {}).get("family_id")
+        new_family = (docs["new"].get("revision_ref") or {}).get("family_id")
+        if not old_family or old_family != new_family:
+            issues.append("公司法解释（三）versions do not share one revision family")
+        new_id = str(docs["new"].get("id") or "")
+        if new_id not in {
+            str(item.get("canonical_id")) for item in docs["old"].get("superseded_by") or []
+        }:
+            issues.append("2014公司法解释（三）missing 2020 superseding version")
+        old_metadata = docs["old"].get("metadata") or {}
+        new_metadata = docs["new"].get("metadata") or {}
+        if old_metadata.get("effective_date") != "2014-03-01":
+            issues.append("2014公司法解释（三）effective_date must be 2014-03-01")
+        if old_metadata.get("amending_fileno") != "法释〔2014〕2号":
+            issues.append("2014公司法解释（三）amending_fileno mismatch")
+        if new_metadata.get("amending_fileno") != "法释〔2020〕18号":
+            issues.append("2020公司法解释（三）amending_fileno mismatch")
+        if new_metadata.get("applicability_mode") != "conditional":
+            issues.append("2020公司法解释（三）missing conditional applicability")
+        new_text = str(docs["new"].get("full_text_plain") or "")
+        new_markdown = str(docs["new"].get("full_text_markdown") or "")
+        if "民法典第三百一十一条" not in new_text or "物权法第一百零六条" in new_text:
+            issues.append("2020公司法解释（三）contains wrong property-law reference")
+        if "合同法第五十二条" in new_text:
+            issues.append("2020公司法解释（三）contains obsolete contract-law reference")
+        if "## 第二十八条" not in new_markdown or "## 第二十九条" in new_markdown:
+            issues.append("2020公司法解释（三）article boundary mismatch")
+        if _has_omnibus_parent_page_prefix(new_text):
+            issues.append("2020公司法解释（三）contains omnibus parent page text")
+    if docs["guidance"]:
+        material_lane = (docs["guidance"].get("material_classification") or {}).get("lane")
+        if material_lane != "reference":
+            issues.append("最高法公司法衔接答记者问 must remain reference material")
+
+    reply_id = resolved.get(keys["reply15"])
+    rule7_id = resolved.get(keys["rule7"])
+    if reply_id and rule7_id and any(
+        str(item.get("from")) == reply_id
+        and str(item.get("to")) == rule7_id
+        and str(item.get("relation")) == "supersedes"
+        for item in catalog_relations
+    ):
+        issues.append("法释〔2024〕15号 must not supersede whole 法释〔2024〕7号")
+
+    return issues, {
+        "documents_resolved": len(resolved),
+        "relations_resolved": resolved_relation_count,
+    }
 
 
 def validate_catalog_exports() -> tuple[list[str], dict[str, Any]]:
@@ -142,6 +366,35 @@ def validate_catalog_exports() -> tuple[list[str], dict[str, Any]]:
             f"extra={len(normalized_ids - catalog_ids)}"
         )
 
+    catalog_relation_items = load_json(catalog_relations_path(), {}).get("items") or []
+    curated_issues, curated_summary = _validate_curated_semantics(
+        normalized_docs,
+        catalog_relation_items,
+    )
+    issues.extend(curated_issues)
+    expected_relation_refs = _expected_canonical_relation_refs(
+        catalog_relation_items,
+        normalized_ids,
+    )
+    actual_relation_refs: set[tuple[str, str, str, str, str, str, str, str]] = set()
+    for entity_id, doc in normalized_docs.items():
+        relations = doc.get("relations") or {}
+        for direction in ("outgoing", "incoming"):
+            for relation in relations.get(direction) or []:
+                actual_relation_refs.add(
+                    _relation_ref_key(
+                        owner_id=entity_id,
+                        direction=direction,
+                        relation=relation,
+                    )
+                )
+    if actual_relation_refs != expected_relation_refs:
+        issues.append(
+            "canonical JSON relation mirror mismatch: "
+            f"missing={len(expected_relation_refs - actual_relation_refs)} "
+            f"extra={len(actual_relation_refs - expected_relation_refs)}"
+        )
+
     normalized_manifest = load_json(catalog_normalized_manifest_path(), {})
     if normalized_manifest.get("count") != len(normalized_files):
         issues.append("catalog normalized manifest count mismatch")
@@ -174,6 +427,16 @@ def validate_catalog_exports() -> tuple[list[str], dict[str, Any]]:
         expected_bucket = bucket_for_document(doc)
         if item.get("bucket") != expected_bucket:
             issues.append(f"Markdown manifest {item.get('id')}: bucket mismatch")
+        relation_types, _ = _document_relation_summary(doc)
+        if relation_types and path.exists():
+            markdown = path.read_text(encoding="utf-8")
+            if "## 版本与适用关系" not in markdown:
+                issues.append(f"Markdown manifest {item.get('id')}: missing relations section")
+            for relation_type in relation_types:
+                if relation_type not in markdown:
+                    issues.append(
+                        f"Markdown manifest {item.get('id')}: missing relation {relation_type}"
+                    )
 
     review_queue = load_json(classification_review_queue_path(), {})
     review_ids = {str(item.get("id") or "") for item in review_queue.get("items") or []}
@@ -214,6 +477,16 @@ def validate_catalog_exports() -> tuple[list[str], dict[str, Any]]:
         expected_dir = catalog_library_dir() / library_relative_dir_for_document(doc)
         if path.parent != expected_dir:
             issues.append(f"library manifest {entity_id}: classification directory mismatch")
+        relation_types, related_ids = _document_relation_summary(doc)
+        outgoing_relations, incoming_relations = directional_relation_summary(doc)
+        if sorted(item.get("relation_types") or []) != relation_types:
+            issues.append(f"library manifest {entity_id}: relation types mismatch")
+        if sorted(item.get("related_ids") or []) != related_ids:
+            issues.append(f"library manifest {entity_id}: related IDs mismatch")
+        if sorted(item.get("outgoing_relations") or []) != outgoing_relations:
+            issues.append(f"library manifest {entity_id}: outgoing relations mismatch")
+        if sorted(item.get("incoming_relations") or []) != incoming_relations:
+            issues.append(f"library manifest {entity_id}: incoming relations mismatch")
     actual_library_paths = set(catalog_library_dir().glob("**/*.md"))
     if actual_library_paths != library_paths:
         issues.append(
@@ -223,6 +496,27 @@ def validate_catalog_exports() -> tuple[list[str], dict[str, Any]]:
         )
     if library_manifest.get("count") != len(library_items):
         issues.append("canonical library manifest count mismatch")
+    index_path = catalog_library_dir() / "index.csv"
+    if not index_path.is_file():
+        issues.append("canonical library index.csv missing")
+    else:
+        with index_path.open("r", encoding="utf-8-sig", newline="") as handle:
+            index_rows = list(csv.DictReader(handle))
+        index_ids = [str(item.get("id") or "") for item in index_rows]
+        if set(index_ids) != catalog_ids or len(index_ids) != len(set(index_ids)):
+            issues.append("canonical library index.csv ID coverage or uniqueness mismatch")
+        for row in index_rows:
+            doc = normalized_docs.get(str(row.get("id") or "")) or {}
+            relation_types, related_ids = _document_relation_summary(doc)
+            outgoing_relations, incoming_relations = directional_relation_summary(doc)
+            if sorted(filter(None, str(row.get("relation_types") or "").split(";"))) != relation_types:
+                issues.append(f"canonical library index {row.get('id')}: relation types mismatch")
+            if sorted(filter(None, str(row.get("related_ids") or "").split(";"))) != related_ids:
+                issues.append(f"canonical library index {row.get('id')}: related IDs mismatch")
+            if sorted(filter(None, str(row.get("outgoing_relations") or "").split(";"))) != outgoing_relations:
+                issues.append(f"canonical library index {row.get('id')}: outgoing relations mismatch")
+            if sorted(filter(None, str(row.get("incoming_relations") or "").split(";"))) != incoming_relations:
+                issues.append(f"canonical library index {row.get('id')}: incoming relations mismatch")
 
     allowed_library_dirs = {
         "01_现行制度",
@@ -273,6 +567,16 @@ def validate_catalog_exports() -> tuple[list[str], dict[str, Any]]:
             issues.append(f"canonical graph edge[{index}]: missing from node")
         if str(edge.get("to")) not in graph_nodes:
             issues.append(f"canonical graph edge[{index}]: missing to node")
+    catalog_edge_keys = _catalog_graph_edge_keys(catalog_relation_items, graph_nodes)
+    graph_edge_keys = {
+        (str(item.get("from")), str(item.get("to")), str(item.get("relation")))
+        for item in graph.get("edges") or []
+    }
+    if not catalog_edge_keys <= graph_edge_keys:
+        issues.append(
+            "canonical graph missing catalog relations: "
+            f"{len(catalog_edge_keys - graph_edge_keys)}"
+        )
     if not graph_nodes:
         issues.append("canonical relation graph missing or empty")
 
@@ -288,6 +592,8 @@ def validate_catalog_exports() -> tuple[list[str], dict[str, Any]]:
         "issues": len(issues),
         "relation_nodes": len(graph_nodes),
         "relation_edges": len(graph.get("edges") or []),
+        "curated_documents_resolved": curated_summary["documents_resolved"],
+        "curated_relations_resolved": curated_summary["relations_resolved"],
     }
     if not issues:
         save_json(
@@ -301,6 +607,9 @@ def validate_catalog_exports() -> tuple[list[str], dict[str, Any]]:
                 "metadata_only": metadata_only,
                 "bucket_counts": summary["bucket_counts"],
                 "relations_file": "canonical/relations/graph.json",
+                "relation_nodes": len(graph_nodes),
+                "relation_edges": len(graph.get("edges") or []),
+                "relation_counts": (graph.get("counts") or {}).get("relations") or {},
                 "source_map_file": "canonical/indexes/source_map.json",
                 "library_manifest": "canonical/library/manifest.json",
                 "classification_review_queue": ("canonical/classification_review_queue.json"),

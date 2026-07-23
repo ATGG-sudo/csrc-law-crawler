@@ -1,0 +1,10 @@
+[Unit]
+Description=Run SPC judicial interpretation daily monitor Monday through Saturday
+
+[Timer]
+OnCalendar=Mon..Sat *-*-* 20:30:00 Asia/Shanghai
+Persistent=true
+Unit=csrc-court-monitor@daily.service
+
+[Install]
+WantedBy=timers.target

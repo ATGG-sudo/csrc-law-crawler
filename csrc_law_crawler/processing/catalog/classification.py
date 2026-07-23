@@ -508,7 +508,7 @@ def _rule_category(document_type: str, systems: set[str]) -> str:
         "chinaclear_cn",
     }:
         return "business_rule"
-    if document_type == "regulation":
+    if document_type in {"regulation", "judicial_interpretation"}:
         return "law_regulation"
     return "normative_document"
 

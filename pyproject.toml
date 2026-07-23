@@ -42,6 +42,7 @@ py-modules = [
   "catalog_services",
   "client",
   "config",
+  "court_monitor",
   "coverage_gaps",
   "crawl",
   "download_assets",
@@ -82,11 +83,19 @@ py-modules = [
 
 [tool.setuptools.package-data]
 "csrc_law_crawler.sources.amac" = ["*.pem"]
-"csrc_law_crawler.sources" = ["csrc_sources.json"]
-"csrc_law_crawler.processing.catalog" = ["classification_overrides.json"]
+"csrc_law_crawler.sources" = [
+  "csrc_sources.json",
+  "court_judicial_interpretation_sources.json",
+  "court_judicial_interpretation_review_decisions.json",
+]
+"csrc_law_crawler.processing.catalog" = [
+  "classification_overrides.json",
+  "curated_relations.json",
+]
 
 [project.scripts]
 csrc-crawler = "csrc_law_crawler.cli.main:main"
+csrc-court-monitor = "court_monitor:main"
 
 [project.optional-dependencies]
 dev = [

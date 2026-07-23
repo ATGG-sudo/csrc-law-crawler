@@ -270,6 +270,8 @@ OUTPUT_DIR/canonical/
 `rule/reference/unknown`，制度效力为
 `current/pending/historical/unknown/not_applicable`。正文中出现“征求意见稿”
 不会改变材料性质；只有标题、来源栏目或明确元数据会触发征求意见分类。
+`material_category=law_regulation` 包括法律、法规、规章和司法解释；
+一般规范性文件使用 `normative_document`，不得将最高人民法院司法解释降入该类。
 默认分类日期使用中国时区当天，可用
 `python normalize_catalog.py --as-of YYYY-MM-DD --force --clean` 重现。
 

@@ -152,6 +152,8 @@ def _front_matter(doc: dict[str, Any]) -> str:
     reference_lifecycle = doc.get("reference_lifecycle") or {}
     enforcement = doc.get("enforcement_classification") or {}
     web_leaf, web_path, web_provenance = _web_category_summary(doc)
+    revision_ref = doc.get("revision_ref") or {}
+    relations = doc.get("relations") or {}
     values = {
         "id": doc.get("id"),
         "title": doc.get("title"),
@@ -176,6 +178,12 @@ def _front_matter(doc: dict[str, Any]) -> str:
         "pub_org": metadata.get("pub_org"),
         "pub_date": metadata.get("pub_date"),
         "effective_date": metadata.get("effective_date"),
+        "edition_label": metadata.get("edition_label"),
+        "amending_fileno": metadata.get("amending_fileno"),
+        "version_family_id": revision_ref.get("family_id"),
+        "revision_ref": revision_ref.get("family_id"),
+        "outgoing_relation_count": len(relations.get("outgoing") or []),
+        "incoming_relation_count": len(relations.get("incoming") or []),
         "preferred_source_system": preferred.get("system"),
         "preferred_source_record_id": preferred.get("record_id"),
         "content_status": doc.get("content_status"),
@@ -183,9 +191,6 @@ def _front_matter(doc: dict[str, Any]) -> str:
     }
     lines = ["---"]
     lines.extend(f"{key}: {yaml_scalar(value)}" for key, value in values.items())
-    revision_ref = doc.get("revision_ref") or {}
-    if revision_ref:
-        lines.append(f"revision_ref: {yaml_scalar(revision_ref.get('family_id'))}")
     lines.append("---")
     return "\n".join(lines)
 
@@ -196,6 +201,7 @@ def _metadata_table(doc: dict[str, Any]) -> str:
     material = doc.get("material_classification") or {}
     reference_lifecycle = doc.get("reference_lifecycle") or {}
     enforcement = doc.get("enforcement_classification") or {}
+    revision_ref = doc.get("revision_ref") or {}
     web_leaf, web_path, web_provenance = _web_category_summary(doc)
     rows = [
         ("统一法规 ID", doc.get("id")),
@@ -208,6 +214,9 @@ def _metadata_table(doc: dict[str, Any]) -> str:
         ("发布机构", metadata.get("pub_org")),
         ("发布日期", metadata.get("pub_date")),
         ("施行日期", metadata.get("effective_date")),
+        ("版本标识", metadata.get("edition_label")),
+        ("修正依据文号", metadata.get("amending_fileno")),
+        ("版本族", revision_ref.get("family_id")),
         ("效力状态", doc.get("status")),
         ("归一化效力", effectiveness.get("status")),
         ("归一化效力标签", effectiveness.get("label")),
@@ -226,6 +235,97 @@ def _metadata_table(doc: dict[str, Any]) -> str:
     lines.extend(
         f"| {clean_table_value(key)} | {clean_table_value(value)} |" for key, value in rows
     )
+    return "\n".join(lines)
+
+
+def _relation_counterpart_id(relation: dict[str, Any]) -> str:
+    return str(
+        relation.get("canonical_id")
+        or relation.get("counterpart_id")
+        or relation.get("other_id")
+        or relation.get("to")
+        or relation.get("from")
+        or ""
+    )
+
+
+def directional_relation_summary(doc: dict[str, Any]) -> tuple[list[str], list[str]]:
+    relations = doc.get("relations") or {}
+
+    def summarize(direction: str) -> list[str]:
+        values = {
+            f"{relation_type}:{counterpart_id}"
+            for item in relations.get(direction) or []
+            if (relation_type := str(item.get("relation") or ""))
+            and (counterpart_id := _relation_counterpart_id(item))
+        }
+        return sorted(values)
+
+    return summarize("outgoing"), summarize("incoming")
+
+
+def _relations_section(doc: dict[str, Any]) -> str:
+    relations = doc.get("relations") or {}
+    rows: list[tuple[str, dict[str, Any]]] = []
+    for direction in ("outgoing", "incoming"):
+        rows.extend((direction, item) for item in relations.get(direction) or [])
+    if not rows:
+        return ""
+    lines = [
+        "## 版本与适用关系",
+        "",
+        "| 方向 | 关系 | 关联制度 ID | 范围 | 目标条款 | 议题/适用条件 | 对目标效力 | 事实时间边界 | 关系生效日 | 证据 |",
+        "| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |",
+    ]
+    for direction, relation in rows:
+        evidence = relation.get("evidence") or {}
+        evidence_url = (
+            evidence.get("official_url")
+            or evidence.get("evidence_url")
+            or evidence.get("source_url")
+        )
+        evidence_link = f"[官网]({evidence_url})" if evidence_url else ""
+        fact_boundary = (
+            evidence.get("applicable_fact_window")
+            or evidence.get("temporal_boundary")
+            or evidence.get("boundary_date")
+            or evidence.get("event_date")
+        )
+        if evidence.get("applicable_fact_window") and evidence.get("event_date"):
+            operator = str(evidence.get("event_date_operator") or "").strip()
+            structured_boundary = " ".join(
+                value for value in (operator, str(evidence["event_date"])) if value
+            )
+            fact_boundary = f"{fact_boundary}（{structured_boundary}）"
+        relation_effective_date = (
+            evidence.get("relation_effective_date") or evidence.get("effective_date")
+        )
+        issue_or_condition = (
+            evidence.get("target_issue")
+            or evidence.get("condition")
+            or evidence.get("applicability_note")
+        )
+        lines.append(
+            "| "
+            + " | ".join(
+                [
+                    "出" if direction == "outgoing" else "入",
+                    clean_table_value(relation.get("relation")),
+                    clean_table_value(_relation_counterpart_id(relation)),
+                    clean_table_value(evidence.get("scope")),
+                    clean_table_value(
+                        evidence.get("target_provision")
+                        or evidence.get("target_clause")
+                    ),
+                    clean_table_value(issue_or_condition),
+                    clean_table_value(evidence.get("effect_on_target")),
+                    clean_table_value(fact_boundary),
+                    clean_table_value(relation_effective_date),
+                    evidence_link,
+                ]
+            )
+            + " |"
+        )
     return "\n".join(lines)
 
 
@@ -283,6 +383,9 @@ def build_catalog_markdown(doc: dict[str, Any], markdown_path: Path) -> str:
         parts.append(body)
     elif doc.get("content_status") == "metadata_only":
         parts.append("> 正文未能从官方文件中自动抽取；请参阅下方官方来源或本地附件。")
+    relations = _relations_section(doc)
+    if relations:
+        parts.append(relations)
     sources = _sources_section(doc, markdown_path)
     if sources:
         parts.append(sources)
@@ -305,6 +408,13 @@ def _write_library_index_and_manifest(
         "fileno",
         "pub_date",
         "effective_date",
+        "edition_label",
+        "amending_fileno",
+        "version_family_id",
+        "relation_types",
+        "related_ids",
+        "outgoing_relations",
+        "incoming_relations",
         "material_lane",
         "material_category",
         "material_confidence",
@@ -328,6 +438,10 @@ def _write_library_index_and_manifest(
         for item in items:
             row = {key: item.get(key) for key in fieldnames}
             row["official_sources"] = ";".join(item.get("official_sources") or [])
+            row["relation_types"] = ";".join(item.get("relation_types") or [])
+            row["related_ids"] = ";".join(item.get("related_ids") or [])
+            row["outgoing_relations"] = ";".join(item.get("outgoing_relations") or [])
+            row["incoming_relations"] = ";".join(item.get("incoming_relations") or [])
             writer.writerow(row)
     directory_counts: dict[str, int] = {}
     library_items: list[dict[str, Any]] = []
@@ -441,6 +555,23 @@ def export_catalog_markdown(
                 if source.get("page_url")
             }
         )
+        relations = doc.get("relations") or {}
+        relation_items = [
+            *(relations.get("outgoing") or []),
+            *(relations.get("incoming") or []),
+        ]
+        relation_types = sorted(
+            {str(item.get("relation")) for item in relation_items if item.get("relation")}
+        )
+        related_ids = sorted(
+            {
+                _relation_counterpart_id(item)
+                for item in relation_items
+                if _relation_counterpart_id(item)
+            }
+        )
+        outgoing_relations, incoming_relations = directional_relation_summary(doc)
+        revision_ref = doc.get("revision_ref") or {}
         items.append(
             {
                 "id": entity_id,
@@ -468,6 +599,13 @@ def export_catalog_markdown(
                 "fileno": metadata.get("fileno"),
                 "pub_date": metadata.get("pub_date"),
                 "effective_date": metadata.get("effective_date"),
+                "edition_label": metadata.get("edition_label"),
+                "amending_fileno": metadata.get("amending_fileno"),
+                "version_family_id": revision_ref.get("family_id"),
+                "relation_types": relation_types,
+                "related_ids": related_ids,
+                "outgoing_relations": outgoing_relations,
+                "incoming_relations": incoming_relations,
                 "official_sources": official_sources,
                 "text_length": len(str(doc.get("full_text_plain") or "")),
             }

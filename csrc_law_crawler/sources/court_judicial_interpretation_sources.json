@@ -1,0 +1,214 @@
+{
+  "schema_version": 1,
+  "description": "最高人民法院公司法司法解释及衔接口径受控官方页面",
+  "endpoints": [
+    {
+      "endpoint_id": "court_judicial_interpretation_company_law",
+      "url": "https://www.court.gov.cn/zixun/xiangqing/450831.html",
+      "source_system": "court_judicial_interpretation",
+      "adapter": "court_judicial_interpretation",
+      "scope_mode": "enumerable",
+      "query_sets": [],
+      "default_material_lane": "rule",
+      "crawlability": "A 直接可抓（受控页面）",
+      "recommended_access": "仅抓取已审计的最高法官方页面；复合页面按受控边界切分，边界或条文数异常时失败关闭。",
+      "profiles": [
+        {
+          "profile_id": "profile_court_judicial_interpretation_company_law",
+          "name": "最高人民法院公司法司法解释",
+          "description": "公司法司法解释、批复及官方衔接口径。",
+          "coverage": "公司法时间效力、股权转让出资责任、公司法司法解释版本",
+          "effect": "司法解释、批复及官方解释材料",
+          "publisher": "最高人民法院",
+          "region": "全国",
+          "legal_level": "司法解释",
+          "material_nature": "司法解释及官方解释材料",
+          "officiality": "官方",
+          "priority": "P0",
+          "content_carrier": "HTML",
+          "update_frequency": "按需",
+          "scope_strategy": "受控URL与文档边界"
+        }
+      ],
+      "documents": [
+        {
+          "page_id": "450831",
+          "url": "https://www.court.gov.cn/zixun/xiangqing/450831.html",
+          "upstream_id": "450831",
+          "name": "最高人民法院关于《中华人民共和国公司法》第八十八条第一款不溯及适用的批复",
+          "page_title_contains": "第八十八条第一款不溯及适用的批复",
+          "material_lane": "rule",
+          "metadata": {
+            "document_type": "judicial_interpretation",
+            "fileno": "法释〔2024〕15号",
+            "pub_date": "2024-12-24",
+            "decision_date": "2024-12-24",
+            "promulgation_date": "2024-12-24",
+            "effective_date": "2024-12-24",
+            "official_page_published_at": "2024-12-24 20:54:57",
+            "status": "现行有效"
+          },
+          "required_markers": [
+            "法释〔2024〕15号",
+            "第八十八条第一款仅适用于2024年7月1日之后发生的未届出资期限的股权转让行为",
+            "以前发布的司法解释与本批复规定不一致的，不再适用"
+          ]
+        },
+        {
+          "page_id": "436481",
+          "url": "https://www.court.gov.cn/fabu/xiangqing/436481.html",
+          "upstream_id": "436481",
+          "name": "最高人民法院关于适用《中华人民共和国公司法》时间效力的若干规定",
+          "page_title_contains": "最高人民法院出台适用公司法时间效力司法解释",
+          "material_lane": "rule",
+          "metadata": {
+            "document_type": "judicial_interpretation",
+            "fileno": "法释〔2024〕7号",
+            "pub_date": "2024-06-29",
+            "decision_date": "2024-06-27",
+            "promulgation_date": "2024-06-29",
+            "effective_date": "2024-07-01",
+            "official_page_published_at": "2024-06-30 18:44:47",
+            "status": "现行有效"
+          },
+          "segment": {
+            "start": "第一条 公司法施行后的法律事实引起的民事纠纷案件，适用公司法的规定。",
+            "end": "第八条 本规定自2024年7月1日起施行。",
+            "include_end": true
+          },
+          "required_markers": [
+            "第一条",
+            "第四条",
+            "第八条"
+          ],
+          "forbidden_markers": [
+            "全文共计八条",
+            "法释〔2024〕7号"
+          ],
+          "expected_article_count": 8
+        },
+        {
+          "page_id": "282631",
+          "url": "https://www.court.gov.cn/fabu/xiangqing/282631.html",
+          "upstream_id": "282631:company-law-interpretation-3:2020",
+          "name": "最高人民法院关于适用《中华人民共和国公司法》若干问题的规定（三）",
+          "page_title_contains": "等二十九件商事类司法解释的决定",
+          "material_lane": "rule",
+          "metadata": {
+            "official_title": "最高人民法院关于适用《中华人民共和国公司法》若干问题的规定（三）",
+            "edition_label": "2020年修正",
+            "document_type": "judicial_interpretation",
+            "fileno": "法释〔2011〕3号",
+            "amending_fileno": "法释〔2020〕18号",
+            "pub_date": "2020-12-29",
+            "decision_date": "2020-12-23",
+            "promulgation_date": "2020-12-29",
+            "revision_date": "2020-12-29",
+            "effective_date": "2021-01-01",
+            "official_page_published_at": "2020-12-31 18:44:38",
+            "status": "现行有效"
+          },
+          "segment": {
+            "start": "最高人民法院关于适用《中华人民共和国公司法》若干问题的规定(三)",
+            "end": "最高人民法院关于适用《中华人民共和国公司法》若干问题的规定（四）",
+            "include_end": false
+          },
+          "required_markers": [
+            "根据2020年12月23日",
+            "民法典第三百一十一条",
+            "第二十八条"
+          ],
+          "forbidden_markers": [
+            "物权法第一百零六条"
+          ],
+          "expected_article_count": 28
+        },
+        {
+          "page_id": "438551",
+          "url": "https://www.court.gov.cn/zixun/xiangqing/438551.html",
+          "upstream_id": "438551",
+          "name": "最高人民法院民二庭负责人就公司法时间效力的规定答记者问",
+          "page_title_contains": "最高人民法院民二庭负责人就公司法时间效力的规定答记者问",
+          "material_lane": "reference",
+          "metadata": {
+            "document_type": "official_interview",
+            "pub_date": "2024-07-19",
+            "official_page_published_at": "2024-07-19 14:15:49"
+          },
+          "required_markers": [
+            "五部旧公司法司法解释尚未被废除",
+            "五部旧公司法司法解释条文与公司法规定原理一致、不存在冲突时"
+          ]
+        },
+        {
+          "page_id": "6135",
+          "url": "https://www.court.gov.cn/fabu/xiangqing/6135.html",
+          "upstream_id": "6135:company-law-interpretation-3:2014",
+          "name": "最高人民法院关于适用《中华人民共和国公司法》若干问题的规定（三）",
+          "page_title_contains": "最高人民法院关于修改关于适用《中华人民共和国公司法》若干问题的规定的决定",
+          "material_lane": "rule",
+          "metadata": {
+            "official_title": "最高人民法院关于适用《中华人民共和国公司法》若干问题的规定（三）",
+            "edition_label": "2014年修正",
+            "document_type": "judicial_interpretation",
+            "fileno": "法释〔2011〕3号",
+            "amending_fileno": "法释〔2014〕2号",
+            "pub_date": "2014-02-20",
+            "decision_date": "2014-02-17",
+            "promulgation_date": "2014-02-20",
+            "revision_date": "2014-02-20",
+            "effective_date": "2014-03-01",
+            "official_page_published_at": "2014-02-27 16:26:00",
+            "status": "历史版本"
+          },
+          "segment": {
+            "start": "最高人民法院关于适用《中华人民共和国公司法》若干问题的规定（三）",
+            "end": "第二十八条 冒用他人名义出资并将该他人作为股东在公司登记机关登记的，冒名登记行为人应当承担相应责任；公司、其他股东或者公司债权人以未履行出资义务为由，请求被冒名登记为股东的承担补足出资责任或者对公司债务不能清偿部分的赔偿责任的，人民法院不予支持。",
+            "include_end": true
+          },
+          "required_markers": [
+            "根据2014年2月17日",
+            "物权法第一百零六条",
+            "第二十八条"
+          ],
+          "forbidden_markers": [
+            "根据2020年12月23日",
+            "民法典第三百一十一条"
+          ],
+          "expected_article_count": 28
+        }
+      ]
+    },
+    {
+      "endpoint_id": "court_judicial_interpretation_monitor",
+      "url": "https://www.court.gov.cn/fabu/gengduo/16.html",
+      "healthcheck_url": "https://www.court.gov.cn/fabu/xiangqing/436481.html",
+      "source_system": "court_judicial_interpretation_monitor",
+      "adapter": "court_judicial_interpretation_monitor",
+      "scope_mode": "enumerable",
+      "query_sets": [],
+      "default_material_lane": "clue",
+      "page_size": 20,
+      "crawlability": "A 直接可抓（完整栏目监测）",
+      "recommended_access": "每日完整枚举栏目，按变化抓取详情；每周对全部详情执行条件GET。监测线索须经人工复核后才能进入受控来源。",
+      "profiles": [
+        {
+          "profile_id": "profile_court_judicial_interpretation_monitor",
+          "name": "最高人民法院权威发布—司法解释栏目监测",
+          "description": "栏目发现、整页取证和复核队列，不直接推定效力或进入 canonical。",
+          "coverage": "司法解释栏目全部可见页面",
+          "effect": "监测线索",
+          "publisher": "最高人民法院",
+          "region": "全国",
+          "legal_level": "监测线索",
+          "material_nature": "司法解释栏目监测线索",
+          "officiality": "官方",
+          "priority": "P0",
+          "content_carrier": "HTML",
+          "update_frequency": "每日列表、每周详情",
+          "scope_strategy": "栏目全量枚举与人工晋升"
+        }
+      ]
+    }
+  ]
+}

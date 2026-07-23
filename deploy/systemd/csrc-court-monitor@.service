@@ -1,0 +1,12 @@
+[Unit]
+Description=CSRC crawler SPC judicial interpretation monitor (%i)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+WorkingDirectory=/home/anjie/projects/csrc-law-crawler
+Environment=CSRC_OUTPUT_ROOT=/mnt/d/FUND_COMPLIANCE/CSRC
+Environment=CSRC_COURT_MONITOR_DELAY_MIN=2
+Environment=CSRC_COURT_MONITOR_DELAY_MAX=5
+ExecStart=/home/anjie/projects/csrc-law-crawler/.venv/bin/python /home/anjie/projects/csrc-law-crawler/court_monitor.py --%i

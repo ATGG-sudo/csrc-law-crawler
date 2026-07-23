@@ -21,12 +21,18 @@ class CanonicalRelationGraphBuilder:
         entity_id = str(entity.get("id") or "")
         if not entity_id:
             return ""
+        effectiveness = entity.get("effectiveness") or {}
+        metadata = entity.get("metadata") or {}
+        revision_ref = entity.get("revision_ref") or {}
         self.nodes[entity_id] = {
             "id": entity_id,
             "type": "law",
             "title": entity.get("title"),
             "document_type": entity.get("document_type"),
-            "status": entity.get("status"),
+            "status": effectiveness.get("status") or entity.get("status"),
+            "raw_status": entity.get("status"),
+            "edition_label": metadata.get("edition_label"),
+            "version_family_id": revision_ref.get("family_id"),
             "local_file": local_file,
         }
         return entity_id

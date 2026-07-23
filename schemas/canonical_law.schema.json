@@ -80,6 +80,21 @@
         "null"
       ]
     },
+    "relations": {
+      "additionalProperties": false,
+      "properties": {
+        "incoming": {
+          "items": {"type": "object"},
+          "type": "array"
+        },
+        "outgoing": {
+          "items": {"type": "object"},
+          "type": "array"
+        }
+      },
+      "required": ["outgoing", "incoming"],
+      "type": "object"
+    },
     "schema_version": {
       "type": "integer"
     },
@@ -111,6 +126,7 @@
     "effectiveness",
     "material_classification",
     "metadata",
+    "relations",
     "sources",
     "full_text_plain",
     "full_text_markdown"

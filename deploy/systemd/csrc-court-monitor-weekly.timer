@@ -1,0 +1,10 @@
+[Unit]
+Description=Run full SPC judicial interpretation detail review every Sunday
+
+[Timer]
+OnCalendar=Sun *-*-* 20:30:00 Asia/Shanghai
+Persistent=true
+Unit=csrc-court-monitor@weekly.service
+
+[Install]
+WantedBy=timers.target

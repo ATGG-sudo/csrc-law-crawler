@@ -212,6 +212,15 @@ REFERENCE_LIFECYCLE_SCHEMA = {
     },
     "required": ["status"],
 }
+CANONICAL_RELATIONS_SCHEMA = {
+    "type": "object",
+    "additionalProperties": False,
+    "properties": {
+        "outgoing": {"type": "array", "items": OBJECT},
+        "incoming": {"type": "array", "items": OBJECT},
+    },
+    "required": ["outgoing", "incoming"],
+}
 
 
 SOURCE_RECORD_SCHEMA = _object(
@@ -331,6 +340,7 @@ CANONICAL_LAW_SCHEMA = _object(
         "effectiveness",
         "material_classification",
         "metadata",
+        "relations",
         "sources",
         "full_text_plain",
         "full_text_markdown",
@@ -351,6 +361,7 @@ CANONICAL_LAW_SCHEMA = _object(
         "preferred_source": OBJECT,
         "sources": {"type": "array", "items": OBJECT},
         "revision_ref": {"type": ["object", "null"]},
+        "relations": CANONICAL_RELATIONS_SCHEMA,
         "full_text_plain": STRING,
         "full_text_markdown": STRING,
         "tables": {"type": "array", "items": OBJECT},

@@ -26,6 +26,10 @@ from csrc_law_crawler.processing.catalog.classification import (
     material_classification_for,
     reference_lifecycle_for,
 )
+from csrc_law_crawler.processing.catalog.curated_relations import (
+    apply_curated_metadata_overrides,
+    curated_version_ref_for_entity,
+)
 from csrc_law_crawler.processing.catalog.identity import is_trial_title
 from normalize_laws import normalized_laws_dir
 from parser import infer_effective_date
@@ -109,6 +113,26 @@ def _matches_compact_title(text: str, compact_title: str) -> bool:
     return bool(compact_title) and re.sub(r"[\s#*]+", "", text) == compact_title
 
 
+def _remove_split_title_lines(lines: list[str], compact_title: str) -> list[str]:
+    """Remove one early, multi-line hard-wrapped duplicate of the title."""
+    if not compact_title:
+        return lines
+    for start, line in enumerate(lines[:20]):
+        if not line:
+            continue
+        candidate = ""
+        for end in range(start, len(lines)):
+            part = lines[end]
+            if not part:
+                break
+            candidate += re.sub(r"\s+", "", part)
+            if candidate == compact_title and end > start:
+                return [*lines[:start], "", *lines[end + 1 :]]
+            if not compact_title.startswith(candidate):
+                break
+    return lines
+
+
 def plain_text_to_markdown(text: str, *, title: str = "") -> str:
     """Repair hard-wrapped official text into readable Markdown paragraphs."""
     value = html.unescape(str(text or ""))
@@ -116,6 +140,7 @@ def plain_text_to_markdown(text: str, *, title: str = "") -> str:
     value = value.replace("\xa0", " ").replace("\u3000", " ")
     raw_lines = [re.sub(r"[ \t]+", " ", line).strip() for line in value.splitlines()]
     compact_title = re.sub(r"\s+", "", title or "")
+    raw_lines = _remove_split_title_lines(raw_lines, compact_title)
 
     blocks: list[str] = []
     paragraph = ""
@@ -329,6 +354,39 @@ def catalog_superseded_by() -> dict[str, list[dict[str, Any]]]:
     return result
 
 
+def catalog_relation_refs() -> dict[str, dict[str, list[dict[str, Any]]]]:
+    """Index compact incoming/outgoing catalog edges for each canonical law."""
+    result: dict[str, dict[str, list[dict[str, Any]]]] = defaultdict(
+        lambda: {"outgoing": [], "incoming": []}
+    )
+    for relation in load_json(catalog_relations_path(), {}).get("items") or []:
+        from_id = str(relation.get("from") or "")
+        to_id = str(relation.get("to") or "")
+        relation_type = str(relation.get("relation") or "")
+        if not from_id or not to_id or not relation_type:
+            continue
+        common = {
+            "relation": relation_type,
+            "source": relation.get("source"),
+            "confidence": relation.get("confidence", 1.0),
+            "evidence": relation.get("evidence") or {},
+        }
+        if relation.get("rule_id"):
+            common["rule_id"] = relation["rule_id"]
+        result[from_id]["outgoing"].append({"canonical_id": to_id, **common})
+        result[to_id]["incoming"].append({"canonical_id": from_id, **common})
+    for references in result.values():
+        for direction in ("outgoing", "incoming"):
+            references[direction].sort(
+                key=lambda item: (
+                    str(item.get("relation") or ""),
+                    str(item.get("canonical_id") or ""),
+                    str(item.get("source") or ""),
+                )
+            )
+    return dict(result)
+
+
 def catalog_publishes() -> dict[str, list[str]]:
     result: dict[str, list[str]] = defaultdict(list)
     for relation in load_json(catalog_relations_path(), {}).get("items") or []:
@@ -453,6 +511,12 @@ def _catalog_revision_ref(
     entity: dict[str, Any],
     revision_by_law_id: dict[str, str],
 ) -> dict[str, Any] | None:
+    curated_ref = curated_version_ref_for_entity(entity)
+    if curated_ref:
+        return {
+            **curated_ref,
+            "relations_file": str(relative_to_output(canonical_dir() / "relations" / "graph.json")),
+        }
     neris_source_id = next(
         (
             str(source.get("record_id"))
@@ -500,7 +564,7 @@ def _same_copy_effectiveness_evidence(
                 text = str(value or "").strip()
                 if text and text != "unknown":
                     values[field].add(text)
-        inherited = {
+        inherited: dict[str, Any] = {
             field: next(iter(field_values))
             for field, field_values in values.items()
             if len(field_values) == 1
@@ -542,11 +606,13 @@ def normalize_catalog_entity(
     superseded_by_catalog: dict[str, list[dict[str, Any]]] | None = None,
     publishes_by_catalog: dict[str, list[str]] | None = None,
     finalized_by_catalog: dict[str, list[dict[str, Any]]] | None = None,
+    relations_by_catalog: dict[str, dict[str, list[dict[str, Any]]]] | None = None,
     same_copy_evidence: dict[str, dict[str, Any]] | None = None,
     overrides: dict[str, dict[str, Any]] | None = None,
     as_of: str | None = None,
 ) -> dict[str, Any]:
     entity, entity_id, title, metadata = _catalog_entity_context(path)
+    metadata = apply_curated_metadata_overrides(entity, metadata)
     (
         preferred_system,
         preferred_record_id,
@@ -581,6 +647,13 @@ def normalize_catalog_entity(
     if inherited.get("effectiveness_inherited_from"):
         metadata["effectiveness_inherited_from"] = inherited["effectiveness_inherited_from"]
     classification_entity = {**entity, "metadata": metadata}
+    curated_override_fields = {
+        str(field)
+        for item in metadata.get("curated_override_evidence") or []
+        for field in item.get("fields") or []
+    }
+    if "status" in curated_override_fields and metadata.get("status"):
+        classification_entity["status"] = metadata["status"]
     if inherited.get("material_lane") == "rule":
         classification_entity["material_lane"] = "rule"
         metadata["material_inherited_from"] = inherited.get("material_inherited_from") or []
@@ -627,6 +700,8 @@ def normalize_catalog_entity(
         "case_id": entity.get("case_id"),
         "document_role": entity.get("document_role"),
         "superseded_by": superseded_by,
+        "relations": (relations_by_catalog or {}).get(entity_id)
+        or {"outgoing": [], "incoming": []},
         "metadata": metadata,
         "preferred_source": {
             "system": preferred_system,
@@ -694,7 +769,11 @@ def _classification_review_items(
             for source in doc.get("sources") or []
             if source.get("web_category_provenance")
         }
-        if provenances and provenances <= {"endpoint_profile", "url_inference"}:
+        if (
+            provenances
+            and provenances <= {"endpoint_profile", "url_inference"}
+            and material.get("basis") != "manual_override"
+        ):
             reasons.append("web_taxonomy_low_provenance")
         copy_conflict = (same_copy_conflicts or {}).get(str(doc.get("id") or ""))
         if copy_conflict:
@@ -830,6 +909,7 @@ def normalize_catalog(
     items: list[dict[str, Any]] = []
     revision_by_law_id = load_json(revisions_path(), {}).get("by_law_id") or {}
     superseded_by_catalog = catalog_superseded_by()
+    relations_by_catalog = catalog_relation_refs()
     publishes_by_catalog = catalog_publishes()
     finalized_by_catalog = catalog_finalized_by()
     same_copy_evidence = _same_copy_effectiveness_evidence(source_files)
@@ -853,6 +933,7 @@ def normalize_catalog(
                 superseded_by_catalog=superseded_by_catalog,
                 publishes_by_catalog=publishes_by_catalog,
                 finalized_by_catalog=finalized_by_catalog,
+                relations_by_catalog=relations_by_catalog,
                 same_copy_evidence=same_copy_evidence,
                 overrides=overrides,
                 as_of=as_of,

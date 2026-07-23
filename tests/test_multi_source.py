@@ -73,6 +73,7 @@ class FakeAdapter:
         self.metadata = {"name": "测试规则", "pub_date": "2026-01-01"}
         self.discover_calls = 0
         self.return_not_modified = False
+        self.not_modified_headers: dict[str, str] = {}
 
     def healthcheck(self, endpoint: dict) -> dict:
         return {
@@ -108,7 +109,7 @@ class FakeAdapter:
                 "not_modified": True,
                 "status_code": 304,
                 "final_url": item["url"],
-                "headers": {},
+                "headers": copy.deepcopy(self.not_modified_headers),
             }
         return {
             "body": self.response_body,
@@ -198,11 +199,11 @@ class RegistryAndFingerprintTests(unittest.TestCase):
         self.assertEqual("unproven_single_page_directory", result["completeness_evidence"])
         self.assertEqual(1, result["raw_hit_count"])
 
-    def test_checked_registry_has_85_endpoints_and_86_profiles(self) -> None:
+    def test_checked_registry_has_87_endpoints_and_88_profiles(self) -> None:
         registry = load_registry()
-        self.assertEqual(85, len(registry["endpoints"]))
-        self.assertEqual(86, sum(len(item["profiles"]) for item in registry["endpoints"]))
-        self.assertEqual(85, len({item["url"] for item in registry["endpoints"]}))
+        self.assertEqual(87, len(registry["endpoints"]))
+        self.assertEqual(88, sum(len(item["profiles"]) for item in registry["endpoints"]))
+        self.assertEqual(87, len({item["url"] for item in registry["endpoints"]}))
         self.assertEqual(64, len(registry_query_sha256(registry)))
         self.assertEqual(
             {"enumerable", "catalog_filter", "query_exhaustive", "subject_query"},
@@ -308,6 +309,32 @@ class SourceRunnerTests(unittest.TestCase):
             ]
             self.assertEqual(0, len(record_writes))
             self.assertEqual(1, report["endpoints"]["endpoint_test"]["not_modified"])
+
+    def test_http_304_enriches_case_insensitive_response_validators(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            adapter = FakeAdapter()
+            runner = SourceRunner(
+                registry=_registry(), adapter_factory=lambda name: adapter, root=root
+            )
+            runner.run(mode="baseline")
+            adapter.return_not_modified = True
+            adapter.not_modified_headers = {
+                "Etag": '"fixture-etag"',
+                "Last-Modified": "Wed, 22 Jul 2026 00:00:00 GMT",
+            }
+
+            runner.run(mode="incremental")
+
+            record_path = next((root / "raw/sources/records/test").glob("*.json"))
+            record = json.loads(record_path.read_text(encoding="utf-8"))
+            self.assertEqual(
+                {
+                    "etag": '"fixture-etag"',
+                    "last_modified": "Wed, 22 Jul 2026 00:00:00 GMT",
+                },
+                record["source"]["http_validators"],
+            )
 
     def test_prefetched_direct_asset_avoids_second_network_request(self) -> None:
         class NoNetworkSession:
@@ -1053,6 +1080,7 @@ class WechatAndCatalogGateTests(unittest.TestCase):
                 ("rule", "complete", "rule"),
                 ("failed", "incomplete", "rule"),
                 ("case", "complete", "case"),
+                ("clue", "complete", "clue"),
             ]:
                 (records / f"{record_id}.json").write_text(
                     json.dumps(

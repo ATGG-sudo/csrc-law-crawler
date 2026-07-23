@@ -11,6 +11,7 @@ from catalog_rules import (
 )
 from catalog_services import CatalogRelationIngestor
 
+from .curated_relations import resolve_curated_catalog_relations
 from .identity import PUBLISHING_TITLE_RE, QUOTED_TITLE_RE, normalize_title
 from .matching import (
     infer_draft_finalization_relations,
@@ -121,10 +122,18 @@ def _add_inferred_relations(
         infer_explicit_successor_relations,
     ):
         for relation in infer(entities):
+            from_id = str(relation["from"])
+            to_id = str(relation["to"])
+            relation_type = str(relation["relation"])
+            if relation_type == "same_instrument_copy" and (
+                (from_id, to_id, "supersedes") in relation_ingestor.keys
+                or (to_id, from_id, "supersedes") in relation_ingestor.keys
+            ):
+                continue
             relation_ingestor.add(
-                str(relation["from"]),
-                str(relation["to"]),
-                str(relation["relation"]),
+                from_id,
+                to_id,
+                relation_type,
                 {
                     "source": relation.get("source"),
                     "rule_id": relation.get("rule_id"),
@@ -132,6 +141,19 @@ def _add_inferred_relations(
                     **(relation.get("evidence") or {}),
                 },
             )
+
+
+def _add_curated_relations(
+    source_to_entity: dict[tuple[str, str], str],
+    relation_ingestor: CatalogRelationIngestor,
+) -> None:
+    for relation in resolve_curated_catalog_relations(source_to_entity):
+        relation_ingestor.add(
+            str(relation["from"]),
+            str(relation["to"]),
+            str(relation["relation"]),
+            relation["evidence"],
+        )
 
 
 def _build_catalog_relations(
@@ -142,6 +164,9 @@ def _build_catalog_relations(
     source_to_entity: dict[tuple[str, str], str],
 ) -> list[dict[str, Any]]:
     relation_ingestor = CatalogRelationIngestor()
+    # Curated edges go first so audited evidence wins the ingestor's edge-level
+    # dedupe if a later heuristic happens to infer the same endpoints.
+    _add_curated_relations(source_to_entity, relation_ingestor)
     _add_amac_page_attachment_relations(amac_records, source_to_entity, relation_ingestor)
     _add_neris_title_relations(
         neris_records,
@@ -156,6 +181,7 @@ def _build_catalog_relations(
 
 
 add_amac_page_attachment_relations = _add_amac_page_attachment_relations
+add_curated_relations = _add_curated_relations
 add_known_successor_relations = _add_known_successor_relations
 add_neris_title_relations = _add_neris_title_relations
 add_trial_replacement_relations = _add_trial_replacement_relations

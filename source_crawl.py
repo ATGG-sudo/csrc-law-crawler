@@ -8,6 +8,10 @@ import json
 import sys
 
 from csrc_law_crawler.sources.runner import COMPLETE, SourceRunner
+from csrc_law_crawler.sources.court_judicial_interpretation import COURT_ENDPOINT_ID
+from csrc_law_crawler.sources.court_judicial_interpretation_monitor import (
+    COURT_MONITOR_ENDPOINT_ID,
+)
 from config import WORKERS
 from runtime import log_event
 from storage import run_with_output_lock
@@ -18,11 +22,26 @@ def main() -> int:
     selection = parser.add_mutually_exclusive_group(required=True)
     selection.add_argument("--all", action="store_true", help="运行全部非微信端点")
     selection.add_argument("--endpoint", action="append", default=[], help="指定 endpoint_id")
+    selection.add_argument(
+        "--court-judicial-interpretations",
+        action="store_true",
+        help="运行最高法公司法司法解释受控来源",
+    )
+    selection.add_argument(
+        "--court-judicial-interpretation-monitor",
+        action="store_true",
+        help="仅运行最高法司法解释栏目监测来源",
+    )
     mode = parser.add_mutually_exclusive_group(required=True)
     mode.add_argument("--baseline", action="store_true", help="建立基线，不报告历史为新增")
     mode.add_argument("--incremental", action="store_true", help="与已保存基线比较变化")
     parser.add_argument("--resume", metavar="RUN_ID", help="恢复同一指纹下的运行")
     parser.add_argument("--refresh-subjects", action="store_true")
+    parser.add_argument(
+        "--refresh-details",
+        action="store_true",
+        help="对支持的监测来源条件复核全部详情",
+    )
     parser.add_argument("--retry-failed", action="store_true")
     parser.add_argument("--retry-incomplete", action="store_true")
     args = parser.parse_args()
@@ -31,10 +50,19 @@ def main() -> int:
     try:
         report = runner.run(
             mode="baseline" if args.baseline else "incremental",
-            endpoint_ids=None if args.all else args.endpoint,
+            endpoint_ids=(
+                None
+                if args.all
+                else [COURT_ENDPOINT_ID]
+                if args.court_judicial_interpretations
+                else [COURT_MONITOR_ENDPOINT_ID]
+                if args.court_judicial_interpretation_monitor
+                else args.endpoint
+            ),
             resume_run_id=args.resume,
             workers=WORKERS,
             refresh_subjects=args.refresh_subjects,
+            refresh_details=args.refresh_details,
             retry_failed=args.retry_failed,
             retry_incomplete=args.retry_incomplete,
         )

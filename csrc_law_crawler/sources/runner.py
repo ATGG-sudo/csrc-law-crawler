@@ -101,6 +101,9 @@ def _change_type(previous: dict[str, Any] | None, current: dict[str, Any]) -> st
 
 
 def _material_lane(endpoint: dict[str, Any], metadata: dict[str, Any]) -> str:
+    explicit_lane = str(metadata.get("material_lane") or "")
+    if explicit_lane in {"rule", "case", "reference", "subject_snapshot", "clue"}:
+        return explicit_lane
     title = str(metadata.get("name") or "")
     nature = " ".join(str(profile.get("material_nature") or "") for profile in endpoint["profiles"])
     text = f"{title} {nature}"
@@ -109,6 +112,20 @@ def _material_lane(endpoint: dict[str, Any], metadata: dict[str, Any]) -> str:
     if any(token in title for token in REFERENCE_TOKENS):
         return "reference"
     return str(endpoint["default_material_lane"])
+
+
+def _http_validators(headers: dict[str, Any] | None) -> dict[str, Any]:
+    normalized = {
+        str(name).lower(): value for name, value in (headers or {}).items()
+    }
+    return {
+        key: value
+        for key, value in {
+            "etag": normalized.get("etag"),
+            "last_modified": normalized.get("last-modified"),
+        }.items()
+        if value
+    }
 
 
 def _matching_query_terms(
@@ -258,6 +275,7 @@ class SourceRunner:
         mode: str,
         resume: bool,
         endpoint_ids: list[str],
+        refresh_details: bool,
     ) -> dict[str, Any]:
         path = self._manifest_path(run_id)
         if resume:
@@ -268,6 +286,9 @@ class SourceRunner:
                 "schema_version": 1,
                 "registry_query_sha256": self.registry_sha256,
                 "code_sha256": self.code_sha256,
+                "mode": mode,
+                "endpoint_ids": endpoint_ids,
+                "refresh_details": refresh_details,
             }
             mismatches = [key for key, value in expected.items() if manifest.get(key) != value]
             if mismatches:
@@ -284,6 +305,7 @@ class SourceRunner:
             "query_set_version": self.registry.get("query_set_version"),
             "git_commit": self._git_commit(),
             "endpoint_ids": endpoint_ids,
+            "refresh_details": refresh_details,
             "endpoints": {},
         }
         save_json(path, manifest)
@@ -606,7 +628,7 @@ class SourceRunner:
         failures_before = int(state["failed"])
         discoveries_path = self._endpoint_root(endpoint_id) / "discoveries" / f"{run_id}.jsonl"
 
-        for item in items:
+        for item_index, item in enumerate(items, start=1):
             record_id = source_record_id(
                 endpoint["source_system"],
                 upstream_id=item.get("upstream_id"),
@@ -653,19 +675,36 @@ class SourceRunner:
                 if fetched.get("not_modified"):
                     if previous is None:
                         raise RuntimeError("HTTP 304 received without a previous source record")
+                    previous_source = previous.setdefault("source", {})
+                    validators = {
+                        **(previous_source.get("http_validators") or {}),
+                        **_http_validators(fetched.get("headers") or {}),
+                    }
+                    if validators != (previous_source.get("http_validators") or {}):
+                        previous_source["http_validators"] = validators
+                        if endpoint.get("adapter") != "court_judicial_interpretation_monitor":
+                            save_json(record_path, previous)
                     if not known_in_scope:
                         state["in_scope"] += 1
                         seen_record_ids.add(record_id)
-                    state["not_modified"] = int(state.get("not_modified") or 0) + 1
+                    if fetched.get("reused_without_request"):
+                        state["detail_reused"] = int(state.get("detail_reused") or 0) + 1
+                    else:
+                        state["not_modified"] = int(state.get("not_modified") or 0) + 1
                     state["materialized"] += 1
                     materialized_record_ids.append(record_id)
                     record_state = checkpoint.setdefault("records", {}).setdefault(record_id, {})
+                    now = utc_now_iso()
                     record_state.update(
                         {
-                            "last_seen_at": utc_now_iso(),
+                            "last_seen_at": now,
                             "fingerprints": previous.get("fingerprints") or {},
                         }
                     )
+                    record_state.setdefault("first_seen_at", now)
+                    if fetched.get("detail_requested"):
+                        record_state["last_detail_verified_at"] = now
+                        record_state["http_validators"] = validators
                     record_state.setdefault("missing_count", 0)
                     continue
                 raw_path, response_sha = self._save_raw_detail(endpoint_id, record_id, fetched)
@@ -739,15 +778,7 @@ class SourceRunner:
                     relative_to_output(raw_path) if self.root == output_dir() else str(raw_path)
                 )
                 headers = fetched.get("headers") or {}
-                http_validators = {
-                    key: value
-                    for key, value in {
-                        "etag": headers.get("ETag") or headers.get("etag"),
-                        "last_modified": headers.get("Last-Modified")
-                        or headers.get("last-modified"),
-                    }.items()
-                    if value
-                }
+                http_validators = _http_validators(headers)
                 material_lane = _material_lane(endpoint, metadata)
                 web_classification = source_web_classification(
                     metadata,
@@ -798,6 +829,8 @@ class SourceRunner:
                     "attachment_documents": attachment_documents,
                     "fingerprints": fingerprints,
                 }
+                if parsed.get("http_metadata"):
+                    record["source"]["http"] = parsed["http_metadata"]
                 if previous:
                     previous_source = previous.get("source") or {}
                     record["source"]["profiles"] = sorted(
@@ -862,7 +895,15 @@ class SourceRunner:
                         "attempted_at": utc_now_iso(),
                     }
                     record_to_save["discovery_evidence"] = record["discovery_evidence"]
-                if preserved_previous or _record_needs_save(previous, record_to_save):
+                record_changed = _record_needs_save(previous, record_to_save)
+                if (
+                    previous
+                    and endpoint.get("adapter")
+                    == "court_judicial_interpretation_monitor"
+                    and _change_type(previous, record_to_save) is None
+                ):
+                    record_changed = False
+                if preserved_previous or record_changed:
                     save_json(record_path, record_to_save)
                 else:
                     state["unchanged_records"] = int(state.get("unchanged_records") or 0) + 1
@@ -882,12 +923,20 @@ class SourceRunner:
                             current=record_to_save,
                         )
                 record_state = checkpoint.setdefault("records", {}).setdefault(record_id, {})
+                now = utc_now_iso()
                 record_state.update(
                     {
-                        "last_seen_at": utc_now_iso(),
+                        "last_seen_at": now,
                         "fingerprints": record_to_save.get("fingerprints") or fingerprints,
                     }
                 )
+                record_state.setdefault("first_seen_at", now)
+                if fetched.get("detail_requested"):
+                    record_state["last_detail_verified_at"] = now
+                    record_state["http_validators"] = {
+                        **(record_state.get("http_validators") or {}),
+                        **http_validators,
+                    }
                 record_state.setdefault("missing_count", 0)
             except Exception as exc:
                 state["failed"] += 1
@@ -903,6 +952,32 @@ class SourceRunner:
                         "error_message": str(exc),
                     },
                 )
+            finally:
+                if (
+                    endpoint.get("adapter")
+                    == "court_judicial_interpretation_monitor"
+                    and (item_index % SUBJECT_PROGRESS_INTERVAL == 0 or item_index == len(items))
+                ):
+                    checkpoint["monitor_progress"] = {
+                        "processed": item_index,
+                        "total": len(items),
+                        "materialized": state["materialized"],
+                        "failed": state["failed"],
+                        "updated_at": utc_now_iso(),
+                    }
+                    save_json(self._checkpoint_path(endpoint_id), checkpoint)
+                    runtime.log_event(
+                        "court_monitor_progress",
+                        message=(
+                            f"{endpoint_id}: {item_index}/{len(items)}，"
+                            f"已材料化 {state['materialized']}，失败 {state['failed']}"
+                        ),
+                        endpoint_id=endpoint_id,
+                        processed=item_index,
+                        total=len(items),
+                        materialized=state["materialized"],
+                        failed=state["failed"],
+                    )
         return len(items), int(state["failed"]) - failures_before
 
     def _process_subject_queries(
@@ -1103,8 +1178,11 @@ class SourceRunner:
         run_id: str,
         mode: str,
         refresh_subjects: bool = False,
+        refresh_details: bool = False,
         retry_failed: bool = False,
     ) -> dict[str, Any]:
+        endpoint = dict(endpoint)
+        endpoint["_refresh_details"] = refresh_details
         endpoint_id = endpoint["endpoint_id"]
         checkpoint_path = self._checkpoint_path(endpoint_id)
         checkpoint = load_json(
@@ -1285,6 +1363,7 @@ class SourceRunner:
         resume_run_id: str | None = None,
         workers: int = 1,
         refresh_subjects: bool = False,
+        refresh_details: bool = False,
         retry_failed: bool = False,
         retry_incomplete: bool = False,
     ) -> dict[str, Any]:
@@ -1308,6 +1387,7 @@ class SourceRunner:
             mode=mode,
             resume=resume_run_id is not None,
             endpoint_ids=[endpoint["endpoint_id"] for endpoint in selected],
+            refresh_details=refresh_details,
         )
         manifest["execution_status"] = "running"
 
@@ -1349,6 +1429,7 @@ class SourceRunner:
                     run_id=run_id,
                     mode=mode,
                     refresh_subjects=refresh_subjects,
+                    refresh_details=refresh_details,
                     retry_failed=retry_failed,
                 )
             except Exception as exc:
@@ -1499,6 +1580,7 @@ class SourceRunner:
             "schema_version": 1,
             "run_id": manifest["run_id"],
             "mode": manifest["mode"],
+            "refresh_details": bool(manifest.get("refresh_details")),
             "status": manifest["status"],
             "generated_at": utc_now_iso(),
             "registry_query_sha256": manifest["registry_query_sha256"],
@@ -1525,6 +1607,9 @@ class SourceRunner:
                     int(state.get("cached_queries") or 0) for state in states
                 ),
                 "not_modified": sum(int(state.get("not_modified") or 0) for state in states),
+                "detail_reused": sum(
+                    int(state.get("detail_reused") or 0) for state in states
+                ),
                 "unchanged_records": sum(
                     int(state.get("unchanged_records") or 0) for state in states
                 ),
@@ -1534,6 +1619,26 @@ class SourceRunner:
                 ),
                 "http_retries": sum(
                     int((state.get("http_stats") or {}).get("retries") or 0) for state in states
+                ),
+                "list_requests": sum(
+                    int((state.get("http_stats") or {}).get("list_requests") or 0)
+                    for state in states
+                ),
+                "list_not_modified": sum(
+                    int((state.get("http_stats") or {}).get("list_not_modified") or 0)
+                    for state in states
+                ),
+                "detail_requests": sum(
+                    int((state.get("http_stats") or {}).get("detail_requests") or 0)
+                    for state in states
+                ),
+                "detail_not_modified": sum(
+                    int((state.get("http_stats") or {}).get("detail_not_modified") or 0)
+                    for state in states
+                ),
+                "list_parse_failures": sum(
+                    int((state.get("http_stats") or {}).get("list_parse_failures") or 0)
+                    for state in states
                 ),
                 "http_request_seconds": round(
                     sum(

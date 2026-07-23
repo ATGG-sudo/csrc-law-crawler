@@ -360,6 +360,42 @@
       "verified_at": "2026-07-16",
       "evidence_url": "https://www.amac.org.cn/xwfb/tzgg/202510/t20251024_26990.html",
       "note": "协会公告明确2025年修订版经审议公布，并自公布之日起施行。"
+    },
+    {
+      "canonical_id": "law_8ab13e2274849c4f4786f692",
+      "material_lane": "rule",
+      "material_category": "law_regulation",
+      "effectiveness": "current",
+      "verified_at": "2026-07-23",
+      "evidence_url": "https://www.court.gov.cn/zixun/xiangqing/450831.html",
+      "note": "法释〔2024〕15号为最高人民法院正式司法解释性质批复，按司法解释层级归入law_regulation，自2024年12月24日起施行；其仅限缩法释〔2024〕7号第四条第一项的时间适用，不废止整份规定。"
+    },
+    {
+      "canonical_id": "law_e1c0e9cd025928c49b7b3b64",
+      "material_lane": "rule",
+      "material_category": "law_regulation",
+      "effectiveness": "current",
+      "verified_at": "2026-07-23",
+      "evidence_url": "https://www.court.gov.cn/fabu/xiangqing/436481.html",
+      "note": "法释〔2024〕7号为最高人民法院司法解释，按司法解释层级归入law_regulation，自2024年7月1日起施行；法释〔2024〕15号仅对其中第四条第一项作议题级限缩。"
+    },
+    {
+      "canonical_id": "law_fd4fecf044b601003e57ee31",
+      "material_lane": "rule",
+      "material_category": "law_regulation",
+      "effectiveness": "current",
+      "verified_at": "2026-07-23",
+      "evidence_url": "https://www.court.gov.cn/zixun/xiangqing/438551.html",
+      "note": "公司法解释（三）为最高人民法院司法解释，按司法解释层级归入law_regulation；最高人民法院说明相关旧司法解释尚未废除，但仅在与新公司法规定原理一致且不存在冲突时继续适用，正文版本由官方2020年第二次修正文本锚定。"
+    },
+    {
+      "canonical_id": "law_31acbd6a5129d8ca7035a022",
+      "material_lane": "reference",
+      "material_category": "interpretation_qa",
+      "effectiveness": "not_applicable",
+      "verified_at": "2026-07-23",
+      "evidence_url": "https://www.court.gov.cn/zixun/xiangqing/438551.html",
+      "note": "最高人民法院官方答记者问仅作为新旧公司法衔接解释材料，不作为独立规范依据。"
     }
   ]
 }

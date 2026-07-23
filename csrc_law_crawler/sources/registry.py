@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import copy
 import hashlib
 import json
 import os
@@ -10,8 +11,13 @@ from typing import Any
 
 
 DEFAULT_REGISTRY_PATH = Path(__file__).with_name("csrc_sources.json")
-EXPECTED_ENDPOINT_COUNT = 85
-EXPECTED_PROFILE_COUNT = 86
+CURATED_OVERLAY_PATH = Path(__file__).with_name(
+    "court_judicial_interpretation_sources.json"
+)
+EXPECTED_BASE_ENDPOINT_COUNT = 85
+EXPECTED_BASE_PROFILE_COUNT = 86
+EXPECTED_ENDPOINT_COUNT = 87
+EXPECTED_PROFILE_COUNT = 88
 ALLOWED_SCOPE_MODES = {
     "enumerable",
     "catalog_filter",
@@ -29,12 +35,38 @@ def registry_path() -> Path:
 def load_registry(path: Path | None = None) -> dict[str, Any]:
     target = path or registry_path()
     with target.open("r", encoding="utf-8") as f:
-        registry = json.load(f)
+        base = json.load(f)
+    with CURATED_OVERLAY_PATH.open("r", encoding="utf-8") as f:
+        overlay = json.load(f)
+    registry = _merge_registry_overlay(base, overlay)
     validate_registry(registry)
     return registry
 
 
-def validate_registry(registry: dict[str, Any]) -> None:
+def _merge_registry_overlay(
+    base: dict[str, Any], overlay: dict[str, Any]
+) -> dict[str, Any]:
+    if base.get("schema_version") != overlay.get("schema_version"):
+        raise ValueError("source registry and curated overlay schema versions differ")
+    registry = copy.deepcopy(base)
+    registry.setdefault("query_sets", {})
+    for name, terms in (overlay.get("query_sets") or {}).items():
+        if name in registry["query_sets"] and registry["query_sets"][name] != terms:
+            raise ValueError(f"curated overlay conflicts with query set {name!r}")
+        registry["query_sets"][name] = copy.deepcopy(terms)
+    endpoints = overlay.get("endpoints")
+    if not isinstance(endpoints, list) or not endpoints:
+        raise ValueError("curated source overlay requires endpoints")
+    registry.setdefault("endpoints", []).extend(copy.deepcopy(endpoints))
+    return registry
+
+
+def validate_registry(
+    registry: dict[str, Any],
+    *,
+    expected_endpoint_count: int = EXPECTED_ENDPOINT_COUNT,
+    expected_profile_count: int = EXPECTED_PROFILE_COUNT,
+) -> None:
     if registry.get("schema_version") != 1:
         raise ValueError("source registry schema_version must be 1")
     query_sets = registry.get("query_sets")
@@ -72,10 +104,10 @@ def validate_registry(registry: dict[str, Any]) -> None:
             profile_ids.add(profile_id)
             profile_count += 1
 
-    if len(endpoints) != EXPECTED_ENDPOINT_COUNT or profile_count != EXPECTED_PROFILE_COUNT:
+    if len(endpoints) != expected_endpoint_count or profile_count != expected_profile_count:
         raise ValueError(
-            f"registry must contain {EXPECTED_ENDPOINT_COUNT} endpoints and "
-            f"{EXPECTED_PROFILE_COUNT} profiles, got "
+            f"registry must contain {expected_endpoint_count} endpoints and "
+            f"{expected_profile_count} profiles, got "
             f"{len(endpoints)} and {profile_count}"
         )
 
@@ -122,7 +154,10 @@ def source_tree_sha256(project_root: Path | None = None) -> str:
 __all__ = [
     "ALLOWED_MATERIAL_LANES",
     "ALLOWED_SCOPE_MODES",
+    "CURATED_OVERLAY_PATH",
     "DEFAULT_REGISTRY_PATH",
+    "EXPECTED_BASE_ENDPOINT_COUNT",
+    "EXPECTED_BASE_PROFILE_COUNT",
     "EXPECTED_ENDPOINT_COUNT",
     "EXPECTED_PROFILE_COUNT",
     "endpoint_query_terms",

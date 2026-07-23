@@ -922,6 +922,16 @@ def adapter_for(name: str) -> SourceAdapter:
         return CsrcAdapter()
     if name == "subject_query":
         return SubjectQueryAdapter()
+    if name == "court_judicial_interpretation":
+        from .court_judicial_interpretation import CourtJudicialInterpretationAdapter
+
+        return CourtJudicialInterpretationAdapter()
+    if name == "court_judicial_interpretation_monitor":
+        from .court_judicial_interpretation_monitor import (
+            CourtJudicialInterpretationMonitorAdapter,
+        )
+
+        return CourtJudicialInterpretationMonitorAdapter()
     if name in {"http_html", "neris", "amac"}:
         return HttpHtmlAdapter()
     raise ValueError(f"unknown source adapter: {name}")
